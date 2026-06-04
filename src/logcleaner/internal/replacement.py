@@ -8,14 +8,21 @@ from logcleaner.rules.base import RedactionRule
 
 
 def select_non_overlapping(findings: tuple[Finding, ...]) -> tuple[Finding, ...]:
-    """Return findings that do not overlap. Longer findings win when they start together."""
+    """
+    Return findings that do not overlap.
+
+    When two findings start at the same position, the longer one wins.
+    This avoids double-redacting values such as emails inside URLs.
+    """
     selected: list[Finding] = []
     last_end = -1
+
     for finding in sorted(findings, key=lambda item: (item.start, -item.length)):
         if finding.start < last_end:
             continue
         selected.append(finding)
         last_end = finding.end
+
     return tuple(selected)
 
 
@@ -29,12 +36,16 @@ def apply_replacements(
     """Apply findings to text from right to left and return cleaned text."""
     if not findings:
         return text, ()
+
     rules_by_name = {rule.name: rule for rule in rules}
     selected = select_non_overlapping(findings)
     resolved: list[Finding] = []
+
     cleaned = text
     for finding in reversed(selected):
-        replacement = rules_by_name[finding.rule_name].replacement_for(finding, masking)
+        rule = rules_by_name[finding.rule_name]
+        replacement = rule.replacement_for(finding, masking)
         cleaned = f"{cleaned[: finding.start]}{replacement}{cleaned[finding.end :]}"
         resolved.append(finding.with_replacement(replacement))
+
     return cleaned, tuple(reversed(resolved))

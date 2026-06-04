@@ -12,6 +12,7 @@ _BEARER_PATTERN = re.compile(
     r"(?P<prefix>\bBearer\s+)(?P<value>[A-Za-z0-9._~+/=-]{8,})",
     re.IGNORECASE,
 )
+
 _JWT_PATTERN = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")
 
 
@@ -23,23 +24,33 @@ class TokenRule(RedactionRule):
 
     def find(self, text: str) -> tuple[Finding, ...]:
         """Return token findings."""
-        findings = [
-            Finding(
-                self.name,
-                self.category,
-                match.start(),
-                match.end(),
-                match.group(0),
-                metadata={"prefix": match.group("prefix")},
+        findings: list[Finding] = []
+        for match in _BEARER_PATTERN.finditer(text):
+            findings.append(
+                Finding(
+                    rule_name=self.name,
+                    category=self.category,
+                    start=match.start(),
+                    end=match.end(),
+                    matched=match.group(0),
+                    reason="text matched a bearer token",
+                    metadata={"prefix": match.group("prefix")},
+                )
             )
-            for match in _BEARER_PATTERN.finditer(text)
-        ]
-        findings.extend(
-            Finding(self.name, self.category, match.start(), match.end(), match.group(0))
-            for match in _JWT_PATTERN.finditer(text)
-        )
+        for match in _JWT_PATTERN.finditer(text):
+            findings.append(
+                Finding(
+                    rule_name=self.name,
+                    category=self.category,
+                    start=match.start(),
+                    end=match.end(),
+                    matched=match.group(0),
+                    reason="text matched a JWT-like token",
+                )
+            )
         return tuple(findings)
 
     def replacement_for(self, finding: Finding, masking: MaskingStrategy) -> str:
         """Keep the Bearer prefix when it was present."""
-        return f"{finding.metadata.get('prefix', '')}{masking.mask(finding)}"
+        prefix = finding.metadata.get("prefix", "")
+        return f"{prefix}{masking.mask_category('token')}"

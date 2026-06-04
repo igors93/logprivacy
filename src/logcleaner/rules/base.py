@@ -17,9 +17,11 @@ class RedactionRule:
     category: str
 
     def find(self, text: str) -> tuple[Finding, ...]:
+        """Return all findings detected in text."""
         raise NotImplementedError
 
     def replacement_for(self, finding: Finding, masking: MaskingStrategy) -> str:
+        """Return replacement text for a finding."""
         return masking.mask(finding)
 
 
@@ -30,15 +32,31 @@ class RegexRedactionRule(RedactionRule):
     name: str
     category: str
     pattern: Pattern[str] = field(repr=False)
+    reason: str = ""
 
     @classmethod
     def from_pattern(
-        cls, *, name: str, category: str, pattern: str, flags: int = 0
+        cls,
+        *,
+        name: str,
+        category: str,
+        pattern: str,
+        flags: int = 0,
+        reason: str = "",
     ) -> RegexRedactionRule:
-        return cls(name=name, category=category, pattern=re.compile(pattern, flags))
+        """Create a regex rule from a pattern string."""
+        return cls(name=name, category=category, pattern=re.compile(pattern, flags), reason=reason)
 
     def find(self, text: str) -> tuple[Finding, ...]:
+        """Return regex matches as findings."""
         return tuple(
-            Finding(self.name, self.category, m.start(), m.end(), m.group(0))
-            for m in self.pattern.finditer(text)
+            Finding(
+                rule_name=self.name,
+                category=self.category,
+                start=match.start(),
+                end=match.end(),
+                matched=match.group(0),
+                reason=self.reason,
+            )
+            for match in self.pattern.finditer(text)
         )

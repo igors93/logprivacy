@@ -1,3 +1,4 @@
 from logcleaner import clean
 
-print(clean("Login failed for john@example.com with password=123456"))
+message = "Login failed for john@example.com with password=123456"
+print(clean(message))

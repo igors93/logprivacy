@@ -1,6 +1,10 @@
 # Roadmap
 
-- More precise URL sanitization.
-- Optional partial masking strategies.
-- More logging framework integrations.
-- Better reports for structured data.
+Planned areas:
+
+- More precise URL sanitization modes.
+- More format-preserving masks.
+- Optional JSON Lines cleaner.
+- Better reports for structured values.
+- Additional stdlib-only rules.
+- More examples for production logging.

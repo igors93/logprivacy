@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-python -m ruff format .
-python -m ruff check . --fix
+python3 -m ruff format .
+python3 -m ruff check . --fix

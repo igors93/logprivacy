@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-python -m ruff format --check .
-python -m ruff check .
-python -m mypy src
-python -m pytest
-python -m build
+python3 -m ruff format --check .
+python3 -m ruff check .
+python3 -m mypy src
+python3 -m pytest
+python3 -m build

@@ -8,3 +8,4 @@ from typing import Any, TypeAlias
 JSONScalar: TypeAlias = str | int | float | bool | None
 JSONValue: TypeAlias = JSONScalar | Mapping[str, Any] | Sequence[Any]
 SensitiveCategory: TypeAlias = str
+MaskingName: TypeAlias = str

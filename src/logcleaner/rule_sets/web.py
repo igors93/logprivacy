@@ -8,4 +8,9 @@ from logcleaner.rules.base import RedactionRule
 
 def web_rules() -> tuple[RedactionRule, ...]:
     """Return web-focused rules for URLs, tokens, credentials, and secrets."""
-    return (UrlRule(), CredentialRule(), TokenRule(), SecretRule())
+    return (
+        UrlRule(),
+        CredentialRule(),
+        TokenRule(),
+        SecretRule(),
+    )

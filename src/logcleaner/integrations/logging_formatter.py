@@ -15,4 +15,5 @@ class LogCleanerFormatter(logging.Formatter):
     cleaner: Cleaner = field(default_factory=Cleaner)
 
     def format(self, record: logging.LogRecord) -> str:
+        """Format and then clean the log output."""
         return self.cleaner.clean_text(super().format(record))

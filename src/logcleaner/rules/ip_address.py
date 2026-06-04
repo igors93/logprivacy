@@ -6,7 +6,12 @@ import re
 
 from logcleaner.rules.base import RegexRedactionRule
 
-_IPV4_PATTERN = r"(?<!\d)(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}(?!\d)"
+_IPV4_PATTERN = (
+    r"(?<!\d)"
+    r"(?:25[0-5]|2[0-4]\d|1?\d?\d)"
+    r"(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}"
+    r"(?!\d)"
+)
 
 
 class IPAddressRule(RegexRedactionRule):
@@ -14,5 +19,8 @@ class IPAddressRule(RegexRedactionRule):
 
     def __init__(self) -> None:
         super().__init__(
-            name="ip_address", category="ip_address", pattern=re.compile(_IPV4_PATTERN)
+            name="ip_address",
+            category="ip_address",
+            pattern=re.compile(_IPV4_PATTERN),
+            reason="text matched an IPv4 address",
         )
