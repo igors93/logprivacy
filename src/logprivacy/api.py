@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from logprivacy.audit import AuditReport
@@ -179,7 +180,7 @@ def clean_url(url: str, *, policy: CleanerPolicy | None = None, redact_full: boo
 
 
 def scan_file(
-    path: str, *, policy: CleanerPolicy | None = None, encoding: str = "utf-8"
+    path: str | Path, *, policy: CleanerPolicy | None = None, encoding: str = "utf-8"
 ) -> AuditReport:
     """Scan a text file and return an audit report."""
     from logprivacy.files import scan_file as _scan_file
@@ -188,12 +189,12 @@ def scan_file(
 
 
 def clean_file(
-    path: str,
+    path: str | Path,
     *,
-    output: str,
+    output: str | Path,
     policy: CleanerPolicy | None = None,
     encoding: str = "utf-8",
-) -> object:
+) -> Path:
     """Clean a text file and write the cleaned output."""
     from logprivacy.files import clean_file as _clean_file
 

@@ -2,7 +2,8 @@
 
 <p align="center">
   <a href="https://github.com/igors93/logprivacy/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/igors93/logprivacy/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue"></a>
+  <a href="https://pypi.org/project/logprivacy/"><img alt="PyPI" src="https://img.shields.io/pypi/v/logprivacy.svg"></a>
+  <a href="https://pypi.org/project/logprivacy/"><img alt="Python Versions" src="https://img.shields.io/pypi/pyversions/logprivacy.svg"></a>
   <a href="https://github.com/igors93/logprivacy"><img alt="status alpha" src="https://img.shields.io/badge/status-alpha-orange"></a>
   <a href="https://mypy.readthedocs.io/"><img alt="typing typed" src="https://img.shields.io/badge/typing-typed-green"></a>
   <a href="https://github.com/igors93/logprivacy"><img alt="dependencies zero" src="https://img.shields.io/badge/dependencies-zero-brightgreen"></a>
@@ -11,7 +12,7 @@
 
 <p align="center"><strong>Simple by default, powerful by composition, safe by guidance.</strong></p>
 
-LogPrivacy is a zero-dependency Python library that prevents accidental leaks of
+LogPrivacy is a zero-dependency Python library that helps prevent accidental leaks of
 sensitive data in logs, debug output, strings, dictionaries, files, and standard
 Python logging records.
 

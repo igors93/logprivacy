@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import pytest
 
@@ -69,13 +70,13 @@ def test_clean_url_placeholders_are_readable() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_clean_file_multiple_lines(tmp_path: pytest.TempPathFactory) -> None:
-    log_file = tmp_path / "app.log"  # type: ignore[operator]
+def test_clean_file_multiple_lines(tmp_path: Path) -> None:
+    log_file = tmp_path / "app.log"
     log_file.write_text(
         "INFO login john@example.com\nDEBUG password=abc123\nINFO status ok\n",
         encoding="utf-8",
     )
-    output_file = tmp_path / "app.clean.log"  # type: ignore[operator]
+    output_file = tmp_path / "app.clean.log"
 
     from logprivacy import clean_file
 
