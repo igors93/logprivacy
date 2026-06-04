@@ -6,12 +6,12 @@ import logging
 
 import pytest
 
-from logcleaner import (
+from logprivacy import (
     Cleaner,
     CleanerPolicy,
     LogBlockedError,
-    LogCleanerAssertionError,
-    LogCleanerFilter,
+    LogPrivacyAssertionError,
+    LogPrivacyFilter,
     assert_clean,
     audit,
     clean_url,
@@ -34,7 +34,7 @@ def test_logger_cleans_percent_format_args() -> None:
         args=("john@example.com", "s3cr3t"),
         exc_info=None,
     )
-    LogCleanerFilter().filter(record)
+    LogPrivacyFilter().filter(record)
     assert record.getMessage() == "user=[EMAIL] password=[SECRET]"
     assert record.args == ()
 
@@ -77,7 +77,7 @@ def test_clean_file_multiple_lines(tmp_path: pytest.TempPathFactory) -> None:
     )
     output_file = tmp_path / "app.clean.log"  # type: ignore[operator]
 
-    from logcleaner import clean_file
+    from logprivacy import clean_file
 
     clean_file(str(log_file), output=str(output_file))
 
@@ -110,12 +110,12 @@ def test_production_policy_blocks_tokens() -> None:
 
 
 def test_assert_clean_fails_for_sensitive_dict() -> None:
-    with pytest.raises(LogCleanerAssertionError):
+    with pytest.raises(LogPrivacyAssertionError):
         assert_clean({"password": "hunter2"})
 
 
 def test_assert_clean_fails_for_list_with_email() -> None:
-    with pytest.raises(LogCleanerAssertionError):
+    with pytest.raises(LogPrivacyAssertionError):
         assert_clean(["john@example.com"])
 
 

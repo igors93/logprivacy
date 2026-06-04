@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from logcleaner import clean_file, scan_file
+from logprivacy import clean_file, scan_file
 
 
 def test_scan_file_reports_findings(tmp_path: Path):

@@ -1,21 +1,23 @@
-# LogCleaner
+# LogPrivacy
 
-[![CI](https://github.com/igors93/logcleaner/actions/workflows/ci.yml/badge.svg)](https://github.com/igors93/logcleaner/actions/workflows/ci.yml)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
-[![status alpha](https://img.shields.io/badge/status-alpha-orange)](https://github.com/igors93/logcleaner)
-[![typing typed](https://img.shields.io/badge/typing-typed-green)](https://mypy.readthedocs.io/)
-[![dependencies zero](https://img.shields.io/badge/dependencies-zero-brightgreen)](https://github.com/igors93/logcleaner)
-[![license MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+<p align="center">
+  <a href="https://github.com/igors93/logprivacy/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/igors93/logprivacy/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue"></a>
+  <a href="https://github.com/igors93/logprivacy"><img alt="status alpha" src="https://img.shields.io/badge/status-alpha-orange"></a>
+  <a href="https://mypy.readthedocs.io/"><img alt="typing typed" src="https://img.shields.io/badge/typing-typed-green"></a>
+  <a href="https://github.com/igors93/logprivacy"><img alt="dependencies zero" src="https://img.shields.io/badge/dependencies-zero-brightgreen"></a>
+  <a href="LICENSE"><img alt="license MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+</p>
 
 **Simple by default, powerful by composition, safe by guidance.**
 
-LogCleaner is a zero-dependency Python library that prevents accidental leaks of
+LogPrivacy is a zero-dependency Python library that prevents accidental leaks of
 sensitive data in logs, debug output, strings, dictionaries, files, and standard
 Python logging records.
 
 ## What it protects against
 
-LogCleaner detects and masks:
+LogPrivacy detects and masks:
 
 - email addresses
 - passwords and API keys
@@ -26,16 +28,16 @@ LogCleaner detects and masks:
 - IP addresses *(strict mode)*
 - phone-like values *(strict mode)*
 
-## Why LogCleaner?
+## Why LogPrivacy?
 
 Most log leaks are not attacks. They happen because someone prints a payload,
 logs an exception, debugs a request, or passes a dictionary to a logger.
 
-LogCleaner gives you small, memorable tools that fit into your existing code
+LogPrivacy gives you small, memorable tools that fit into your existing code
 without replacing your logging setup:
 
 ```python
-from logcleaner import clean, safe_print, get_safe_logger, audit, assert_clean
+from logprivacy import clean, safe_print, get_safe_logger, audit, assert_clean
 
 clean("email=john@example.com password=123456")
 safe_print("token=abc123456789")
@@ -47,7 +49,7 @@ assert_clean("safe message")
 ## Installation
 
 ```bash
-pip install logcleaner
+pip install logprivacy
 ```
 
 ## Which API should I use?
@@ -67,7 +69,7 @@ See [docs/which-api.md](docs/which-api.md) for a longer guide.
 ## Quick start
 
 ```python
-from logcleaner import clean
+from logprivacy import clean
 
 message = "Login failed for john@example.com with password=123456"
 print(clean(message))
@@ -77,7 +79,7 @@ print(clean(message))
 ## Safe print
 
 ```python
-from logcleaner import safe_print
+from logprivacy import safe_print
 
 safe_print("User john@example.com used token=abc123456789")
 # User [EMAIL] used token=[SECRET]
@@ -87,7 +89,7 @@ safe_print("User john@example.com used token=abc123456789")
 
 ```python
 import logging
-from logcleaner import get_safe_logger
+from logprivacy import get_safe_logger
 
 logging.basicConfig(level=logging.INFO)
 logger = get_safe_logger(__name__)
@@ -99,7 +101,7 @@ logger.warning("User john@example.com used password=123456")
 ## Audit before logging
 
 ```python
-from logcleaner import audit
+from logprivacy import audit
 
 report = audit({"password": "123456", "email": "john@example.com"})
 print(report.safe)        # False
@@ -111,7 +113,7 @@ print(report.describe())
 ## Fail tests when logs are unsafe
 
 ```python
-from logcleaner import assert_clean
+from logprivacy import assert_clean
 
 def test_log_message_has_no_sensitive_data():
     assert_clean("operation finished successfully")
@@ -120,12 +122,12 @@ def test_response_dict_is_safe():
     assert_clean({"username": "john", "status": "active"})
 ```
 
-If sensitive data is found, `assert_clean()` raises `LogCleanerAssertionError`.
+If sensitive data is found, `assert_clean()` raises `LogPrivacyAssertionError`.
 
 ## Clean structured data
 
 ```python
-from logcleaner import clean
+from logprivacy import clean
 
 payload = {
     "email": "john@example.com",
@@ -140,7 +142,7 @@ print(clean(payload))
 ## Clean URLs without losing useful context
 
 ```python
-from logcleaner import clean_url
+from logprivacy import clean_url
 
 url = "https://api.example.com/users?page=1&token=abc123&email=john@example.com"
 print(clean_url(url))
@@ -150,7 +152,7 @@ print(clean_url(url))
 ## Masking styles
 
 ```python
-from logcleaner import Cleaner, CleanerPolicy
+from logprivacy import Cleaner, CleanerPolicy
 
 Cleaner(CleanerPolicy.default(masking="placeholder"))  # [EMAIL], [SECRET]
 Cleaner(CleanerPolicy.default(masking="partial"))      # j***@example.com
@@ -176,7 +178,7 @@ See [docs/policies.md](docs/policies.md) for details.
 ## Clean log files
 
 ```python
-from logcleaner import scan_file, clean_file
+from logprivacy import scan_file, clean_file
 
 report = scan_file("app.log")
 print(report.describe())
@@ -187,17 +189,17 @@ clean_file("app.log", output="app.clean.log")
 ## CLI
 
 ```bash
-python -m logcleaner scan app.log
-python -m logcleaner clean app.log --output app.clean.log
-python -m logcleaner text "email=john@example.com password=123"
+python -m logprivacy scan app.log
+python -m logprivacy clean app.log --output app.clean.log
+python -m logprivacy text "email=john@example.com password=123"
 ```
 
 ## Security disclaimer
 
-LogCleaner reduces accidental sensitive-data exposure in logs. It is a safety
+LogPrivacy reduces accidental sensitive-data exposure in logs. It is a safety
 net, not a DLP system. Regex-based detection can have false positives and false
 negatives. You should avoid logging sensitive data in the first place.
-LogCleaner does not replace secret management, encryption, access control, or
+LogPrivacy does not replace secret management, encryption, access control, or
 legal privacy review.
 
 See [docs/security-model.md](docs/security-model.md) for the full security model.

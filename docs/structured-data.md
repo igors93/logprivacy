@@ -1,9 +1,9 @@
 # Structured Data
 
-LogCleaner cleans dictionaries, lists, and tuples recursively.
+LogPrivacy cleans dictionaries, lists, and tuples recursively.
 
 ```python
-from logcleaner import clean
+from logprivacy import clean
 
 clean({"email": "john@example.com", "password": "123"})
 ```

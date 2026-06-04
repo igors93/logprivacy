@@ -1,6 +1,6 @@
 # Which API should I use?
 
-A quick guide to picking the right LogCleaner function for your situation.
+A quick guide to picking the right LogPrivacy function for your situation.
 
 ---
 
@@ -9,7 +9,7 @@ A quick guide to picking the right LogCleaner function for your situation.
 Use **`clean()`**.
 
 ```python
-from logcleaner import clean
+from logprivacy import clean
 
 message = "Login failed for john@example.com with password=hunter2"
 print(clean(message))
@@ -25,7 +25,7 @@ print(clean(message))
 Use **`safe_print()`**.
 
 ```python
-from logcleaner import safe_print
+from logprivacy import safe_print
 
 safe_print("token=abc123456789", {"password": "hunter2"})
 # token=[SECRET] {'password': '[SECRET]'}
@@ -42,7 +42,7 @@ Use **`get_safe_logger()`**.
 
 ```python
 import logging
-from logcleaner import get_safe_logger
+from logprivacy import get_safe_logger
 
 logging.basicConfig(level=logging.INFO)
 logger = get_safe_logger(__name__)
@@ -61,7 +61,7 @@ attached. You can use it everywhere you would use `logging.getLogger()`.
 Use **`audit()`**.
 
 ```python
-from logcleaner import audit
+from logprivacy import audit
 
 report = audit({"password": "hunter2", "user": "john"})
 
@@ -79,7 +79,7 @@ if not report.safe:
 Use **`assert_clean()`**.
 
 ```python
-from logcleaner import assert_clean
+from logprivacy import assert_clean
 
 def test_response_is_safe():
     response = {"username": "john", "status": "active"}
@@ -90,7 +90,7 @@ def test_no_password_in_error_message():
     assert_clean(msg)  # passes
 ```
 
-`assert_clean()` raises `LogCleanerAssertionError` (a subclass of `AssertionError`)
+`assert_clean()` raises `LogPrivacyAssertionError` (a subclass of `AssertionError`)
 if sensitive data is found. Works on strings and structured values.
 
 ---
@@ -100,7 +100,7 @@ if sensitive data is found. Works on strings and structured values.
 Use **`clean_url()`**.
 
 ```python
-from logcleaner import clean_url
+from logprivacy import clean_url
 
 url = "https://api.example.com/search?q=python&page=1&token=abc123&api_key=xyz"
 print(clean_url(url))
@@ -118,7 +118,7 @@ Use **`clean_file()`** to write a cleaned copy, or **`scan_file()`** to get a
 report without modifying the file.
 
 ```python
-from logcleaner import scan_file, clean_file
+from logprivacy import scan_file, clean_file
 
 # Check first
 report = scan_file("app.log")
@@ -135,13 +135,13 @@ clean_file("app.log", output="app.clean.log")
 Create a `Cleaner` with a custom `CleanerPolicy`.
 
 ```python
-from logcleaner import Cleaner, CleanerPolicy
+from logprivacy import Cleaner, CleanerPolicy
 
 # Strict: also detects IP addresses and phone numbers
 cleaner = Cleaner(policy=CleanerPolicy.strict())
 
 # Custom: only detect emails
-from logcleaner import EmailRule
+from logprivacy import EmailRule
 cleaner = Cleaner(policy=CleanerPolicy.default().with_rules(EmailRule()))
 ```
 

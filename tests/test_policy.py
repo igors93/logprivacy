@@ -1,5 +1,5 @@
-from logcleaner import Cleaner, CleanerPolicy
-from logcleaner.rules import EmailRule
+from logprivacy import Cleaner, CleanerPolicy
+from logprivacy.rules import EmailRule
 
 
 def test_default_policy_has_rules():

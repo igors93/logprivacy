@@ -1,6 +1,6 @@
 import pytest
 
-from logcleaner import Cleaner, CleanerPolicy, LogBlockedError
+from logprivacy import Cleaner, CleanerPolicy, LogBlockedError
 
 
 def test_cleaner_cleans_text():

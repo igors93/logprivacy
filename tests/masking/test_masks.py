@@ -1,4 +1,4 @@
-from logcleaner.masking.masks import keep_edges, mask_email
+from logprivacy.masking.masks import keep_edges, mask_email
 
 
 def test_keep_edges_masks_middle():

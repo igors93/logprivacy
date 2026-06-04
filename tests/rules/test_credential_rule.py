@@ -1,5 +1,5 @@
-from logcleaner import clean_text
-from logcleaner.rules import CredentialRule
+from logprivacy import clean_text
+from logprivacy.rules import CredentialRule
 
 
 def test_credential_rule_finds_password_assignment():

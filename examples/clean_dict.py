@@ -1,6 +1,6 @@
 """Clean a dictionary — sensitive keys are fully redacted, other values are scanned."""
 
-from logcleaner import clean
+from logprivacy import clean
 
 payload = {
     "email": "john@example.com",

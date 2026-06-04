@@ -1,5 +1,5 @@
-from logcleaner import clean_text
-from logcleaner.rules import CreditCardRule
+from logprivacy import clean_text
+from logprivacy.rules import CreditCardRule
 
 
 def test_credit_card_rule_finds_luhn_valid_value():

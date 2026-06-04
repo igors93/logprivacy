@@ -1,4 +1,4 @@
-from logcleaner.rules import SecretRule
+from logprivacy.rules import SecretRule
 
 
 def test_secret_rule_finds_stripe_key():

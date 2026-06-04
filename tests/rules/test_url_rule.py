@@ -1,4 +1,4 @@
-from logcleaner.rules import UrlRule
+from logprivacy.rules import UrlRule
 
 
 def test_url_rule_finds_url():

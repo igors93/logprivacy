@@ -1,4 +1,4 @@
-from logcleaner import Cleaner, CleanerPolicy, CustomRegexRule
+from logprivacy import Cleaner, CleanerPolicy, CustomRegexRule
 
 order_rule = CustomRegexRule(
     name="order_id",

@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## 0.2.0 - Unreleased
 
+### Changed
+
+- Finalized the public package name as `logprivacy` (previously `logcleaner`, which was unavailable on PyPI).
+
 ### Added
 
 - `safe_print()` for safe terminal and debug output.
@@ -22,7 +26,7 @@ All notable changes to this project will be documented in this file.
 - `CleanerPolicy.web()` focused on HTTP access log patterns.
 - `explain()` for a human-readable breakdown of what would be redacted and why.
 - `RedactionResult` and `Finding` as rich result types with metadata.
-- `LogCleanerFormatter` as an alternative logging integration.
+- `LogPrivacyFormatter` as an alternative logging integration.
 
 ### Changed
 
@@ -50,7 +54,7 @@ All notable changes to this project will be documented in this file.
 - New `docs/which-api.md`: decision guide for picking the right function.
 - New `docs/policies.md`: explanation of all four built-in policies.
 - New `docs/release-checklist.md`: step-by-step release process.
-- `docs/security-model.md` rewritten: what LogCleaner protects against, what
+- `docs/security-model.md` rewritten: what LogPrivacy protects against, what
   it does not, and the right mental model for using it.
 
 ### Tests
@@ -74,5 +78,5 @@ All notable changes to this project will be documented in this file.
 - Modular redaction rules: email, credential, token, secret, URL.
 - Placeholder masking strategy.
 - Structured data cleaning for dicts, lists, and tuples.
-- Python logging integration via `LogCleanerFilter`.
+- Python logging integration via `LogPrivacyFilter`.
 - Documentation and examples.

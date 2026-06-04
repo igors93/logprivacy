@@ -1,10 +1,10 @@
 # Project Structure Review
 
-The current LogCleaner structure is a good foundation for a maintainable Python library.
+The current LogPrivacy structure is a good foundation for a maintainable Python library.
 
 ## What is good
 
-- `src/logcleaner/` keeps package code separate from tests and docs.
+- `src/logprivacy/` keeps package code separate from tests and docs.
 - `rules/` isolates each kind of sensitive-data detector.
 - `masking/` keeps replacement behavior separate from detection behavior.
 - `structured/` separates dictionary/list traversal from text redaction.

@@ -1,5 +1,5 @@
-from logcleaner.masking import HashMaskingStrategy, PlaceholderMaskingStrategy
-from logcleaner.result import Finding
+from logprivacy.masking import HashMaskingStrategy, PlaceholderMaskingStrategy
+from logprivacy.result import Finding
 
 
 def test_placeholder_strategy_masks_by_category():

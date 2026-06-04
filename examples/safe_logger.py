@@ -2,7 +2,7 @@
 
 import logging
 
-from logcleaner import get_safe_logger
+from logprivacy import get_safe_logger
 
 logging.basicConfig(level=logging.INFO)
 logger = get_safe_logger(__name__)

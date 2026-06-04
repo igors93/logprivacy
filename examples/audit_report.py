@@ -1,6 +1,6 @@
 """Inspect a value for sensitive data without modifying it."""
 
-from logcleaner import audit
+from logprivacy import audit
 
 report = audit({"password": "hunter2", "email": "john@example.com", "status": "failed"})
 

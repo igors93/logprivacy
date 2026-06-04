@@ -1,4 +1,4 @@
-from logcleaner.rules import EmailRule
+from logprivacy.rules import EmailRule
 
 
 def test_email_rule_finds_email():

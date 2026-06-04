@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from logcleaner.__main__ import main
+from logprivacy.__main__ import main
 
 
 def test_cli_text_outputs_cleaned_text(capsys):

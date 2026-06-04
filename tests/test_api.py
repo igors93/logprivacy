@@ -1,7 +1,7 @@
 import pytest
 
-from logcleaner import (
-    LogCleanerAssertionError,
+from logprivacy import (
+    LogPrivacyAssertionError,
     assert_clean,
     audit,
     clean,
@@ -39,7 +39,7 @@ def test_assert_clean_passes_for_safe_text():
 
 
 def test_assert_clean_fails_for_sensitive_text():
-    with pytest.raises(LogCleanerAssertionError):
+    with pytest.raises(LogPrivacyAssertionError):
         assert_clean("password=123")
 
 
@@ -93,7 +93,7 @@ def test_audit_nested_dict_with_sensitive_value():
 
 
 def test_assert_clean_fails_with_sensitive_dict():
-    from logcleaner import LogCleanerAssertionError
+    from logprivacy import LogPrivacyAssertionError
 
-    with pytest.raises(LogCleanerAssertionError):
+    with pytest.raises(LogPrivacyAssertionError):
         assert_clean({"password": "123"})

@@ -1,14 +1,14 @@
 # Security model
 
-LogCleaner is a safety net that reduces the risk of accidental sensitive-data
+LogPrivacy is a safety net that reduces the risk of accidental sensitive-data
 exposure in logs. Understanding what it protects against — and what it does not
 — is important before relying on it in a production system.
 
 ---
 
-## What LogCleaner protects against
+## What LogPrivacy protects against
 
-LogCleaner is designed to catch **accidental leaks** — the kind that happen when
+LogPrivacy is designed to catch **accidental leaks** — the kind that happen when
 a developer prints a payload, logs an exception that contains a user object, or
 passes a dictionary to a logger without reviewing its contents.
 
@@ -28,9 +28,9 @@ Python's standard `logging` module without replacing it.
 
 ---
 
-## What LogCleaner does not protect against
+## What LogPrivacy does not protect against
 
-LogCleaner is **not** a data-loss prevention (DLP) system. It does not:
+LogPrivacy is **not** a data-loss prevention (DLP) system. It does not:
 
 - **Guarantee complete anonymization.** Regex-based detection has false
   negatives — novel secret formats, obfuscated values, or custom encodings may
@@ -66,15 +66,15 @@ calibrate your policy.
 
 ## The right mental model
 
-Think of LogCleaner as a **seatbelt**, not a firewall.
+Think of LogPrivacy as a **seatbelt**, not a firewall.
 
 - It should not be the only control that prevents sensitive data from appearing
   in logs.
 - The first control is **not logging sensitive data in the first place**: avoid
   passing request bodies, user objects, or exception payloads directly to a
   logger.
-- LogCleaner is the second control: it catches what slips through.
+- LogPrivacy is the second control: it catches what slips through.
 - `CleanerPolicy.production()` is the third control: it raises an exception
   when a blocked category is detected, turning a silent leak into a loud failure.
 
-Using LogCleaner is not permission to log sensitive data carelessly.
+Using LogPrivacy is not permission to log sensitive data carelessly.

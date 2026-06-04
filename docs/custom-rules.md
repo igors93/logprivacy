@@ -1,7 +1,7 @@
 # Custom Rules
 
 ```python
-from logcleaner import Cleaner, CleanerPolicy, CustomRegexRule
+from logprivacy import Cleaner, CleanerPolicy, CustomRegexRule
 
 rule = CustomRegexRule(
     name="employee_id",

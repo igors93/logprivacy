@@ -1,6 +1,6 @@
 import logging
 
-from logcleaner import Cleaner, CleanerPolicy, LogCleanerFilter, get_safe_logger
+from logprivacy import Cleaner, CleanerPolicy, LogPrivacyFilter, get_safe_logger
 
 
 def test_logging_filter_cleans_rendered_message():
@@ -14,7 +14,7 @@ def test_logging_filter_cleans_rendered_message():
         exc_info=None,
     )
 
-    LogCleanerFilter().filter(record)
+    LogPrivacyFilter().filter(record)
 
     assert record.getMessage() == "email=[EMAIL] password=[SECRET]"
     assert record.args == ()
@@ -31,40 +31,40 @@ def test_logging_filter_clears_args_after_cleaning():
         args=("john@example.com",),
         exc_info=None,
     )
-    LogCleanerFilter().filter(record)
+    LogPrivacyFilter().filter(record)
     assert record.args == ()
 
 
 def test_get_safe_logger_adds_filter_once():
-    logger = get_safe_logger("logcleaner-test-once")
-    get_safe_logger("logcleaner-test-once")
-    filters = [f for f in logger.filters if isinstance(f, LogCleanerFilter)]
+    logger = get_safe_logger("logprivacy-test-once")
+    get_safe_logger("logprivacy-test-once")
+    filters = [f for f in logger.filters if isinstance(f, LogPrivacyFilter)]
     assert len(filters) == 1
 
 
 def test_get_safe_logger_replaces_filter_when_policy_given():
-    logger = get_safe_logger("logcleaner-test-policy")
-    original_filters = [f for f in logger.filters if isinstance(f, LogCleanerFilter)]
+    logger = get_safe_logger("logprivacy-test-policy")
+    original_filters = [f for f in logger.filters if isinstance(f, LogPrivacyFilter)]
     assert len(original_filters) == 1
     original_cleaner = original_filters[0].cleaner  # type: ignore[union-attr]
 
     strict_policy = CleanerPolicy.strict()
-    get_safe_logger("logcleaner-test-policy", policy=strict_policy)
+    get_safe_logger("logprivacy-test-policy", policy=strict_policy)
 
-    updated_filters = [f for f in logger.filters if isinstance(f, LogCleanerFilter)]
+    updated_filters = [f for f in logger.filters if isinstance(f, LogPrivacyFilter)]
     assert len(updated_filters) == 1
     assert updated_filters[0].cleaner is not original_cleaner  # type: ignore[union-attr]
 
 
 def test_get_safe_logger_without_policy_keeps_existing_filter():
     first_cleaner = Cleaner(policy=CleanerPolicy.strict())
-    logger = logging.getLogger("logcleaner-test-keep")
+    logger = logging.getLogger("logprivacy-test-keep")
     for f in list(logger.filters):
         logger.removeFilter(f)
-    logger.addFilter(LogCleanerFilter(cleaner=first_cleaner))
+    logger.addFilter(LogPrivacyFilter(cleaner=first_cleaner))
 
-    get_safe_logger("logcleaner-test-keep")
+    get_safe_logger("logprivacy-test-keep")
 
-    filters = [f for f in logger.filters if isinstance(f, LogCleanerFilter)]
+    filters = [f for f in logger.filters if isinstance(f, LogPrivacyFilter)]
     assert len(filters) == 1
     assert filters[0].cleaner is first_cleaner  # type: ignore[union-attr]

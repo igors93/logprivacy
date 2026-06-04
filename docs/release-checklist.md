@@ -1,6 +1,6 @@
 # Release checklist
 
-Follow these steps to publish a new version of LogCleaner.
+Follow these steps to publish a new version of LogPrivacy.
 
 ---
 
@@ -9,7 +9,7 @@ Follow these steps to publish a new version of LogCleaner.
 Edit the version in two places:
 
 - `pyproject.toml` — `version = "X.Y.Z"`
-- `src/logcleaner/__init__.py` — `__version__ = "X.Y.Z"`
+- `src/logprivacy/__init__.py` — `__version__ = "X.Y.Z"`
 
 Both values must match.
 
@@ -47,7 +47,7 @@ Wait for all CI jobs (quality, tests, build) to pass on GitHub Actions.
 python3 -m build
 ```
 
-This produces `dist/logcleaner-X.Y.Z.tar.gz` and `dist/logcleaner-X.Y.Z-py3-none-any.whl`.
+This produces `dist/logprivacy-X.Y.Z.tar.gz` and `dist/logprivacy-X.Y.Z-py3-none-any.whl`.
 
 ---
 
@@ -56,8 +56,8 @@ This produces `dist/logcleaner-X.Y.Z.tar.gz` and `dist/logcleaner-X.Y.Z-py3-none
 ```bash
 python3 -m venv /tmp/lc-test-env
 source /tmp/lc-test-env/bin/activate
-pip install dist/logcleaner-X.Y.Z-py3-none-any.whl
-python3 -c "import logcleaner; print(logcleaner.__version__)"
+pip install dist/logprivacy-X.Y.Z-py3-none-any.whl
+python3 -c "import logprivacy; print(logprivacy.__version__)"
 deactivate
 ```
 
@@ -88,8 +88,8 @@ variable.
 After the release is live (usually within a few minutes):
 
 ```bash
-pip install logcleaner==X.Y.Z
-python3 -c "import logcleaner; print(logcleaner.__version__)"
+pip install logprivacy==X.Y.Z
+python3 -c "import logprivacy; print(logprivacy.__version__)"
 ```
 
 ---

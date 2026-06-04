@@ -1,4 +1,4 @@
-from logcleaner import clean_with_result
+from logprivacy import clean_with_result
 
 
 def test_result_summary_is_safe():
@@ -12,4 +12,4 @@ def test_result_summary_is_safe():
 
 def test_result_explain_no_findings():
     result = clean_with_result("hello world")
-    assert result.explain() == "LogCleaner found no sensitive values."
+    assert result.explain() == "LogPrivacy found no sensitive values."

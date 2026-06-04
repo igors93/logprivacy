@@ -1,6 +1,6 @@
 """Strict policy also detects IP addresses and phone-number-like values."""
 
-from logcleaner import Cleaner, CleanerPolicy
+from logprivacy import Cleaner, CleanerPolicy
 
 cleaner = Cleaner(policy=CleanerPolicy.strict())
 

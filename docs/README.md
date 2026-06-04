@@ -1,6 +1,6 @@
-# LogCleaner Documentation
+# LogPrivacy Documentation
 
-LogCleaner helps Python projects reduce accidental leaks of sensitive data in logs.
+LogPrivacy helps Python projects reduce accidental leaks of sensitive data in logs.
 
 Start with:
 

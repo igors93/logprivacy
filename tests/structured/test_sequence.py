@@ -1,4 +1,4 @@
-from logcleaner import clean
+from logprivacy import clean
 
 
 def test_list_is_cleaned():

@@ -17,7 +17,7 @@ URLs, and credit-card-like values (using Luhn validation to reduce false
 positives).
 
 ```python
-from logcleaner import clean, CleanerPolicy
+from logprivacy import clean, CleanerPolicy
 
 clean("email=john@example.com password=hunter2")
 # "email=[EMAIL] password=[SECRET]"
@@ -39,7 +39,7 @@ Extends `default()` by adding:
 - Phone-number-like value detection
 
 ```python
-from logcleaner import Cleaner, CleanerPolicy
+from logprivacy import Cleaner, CleanerPolicy
 
 cleaner = Cleaner(policy=CleanerPolicy.strict())
 cleaner.clean("client_ip=192.168.1.10 email=john@example.com")
@@ -61,7 +61,7 @@ tokens, and API secrets. Does not include email, credit card, IP address, or
 phone rules, which produce more false positives in high-volume request logs.
 
 ```python
-from logcleaner import Cleaner, CleanerPolicy
+from logprivacy import Cleaner, CleanerPolicy
 
 cleaner = Cleaner(policy=CleanerPolicy.web())
 cleaner.clean("GET /v1/users?token=abc123 HTTP/1.1")
@@ -81,7 +81,7 @@ Use this when you want your application to fail loudly if sensitive data reaches
 a log statement rather than quietly replace it.
 
 ```python
-from logcleaner import Cleaner, CleanerPolicy, LogBlockedError
+from logprivacy import Cleaner, CleanerPolicy, LogBlockedError
 
 cleaner = Cleaner(policy=CleanerPolicy.production())
 
@@ -89,7 +89,7 @@ try:
     cleaner.clean("password=hunter2")
 except LogBlockedError as exc:
     print(exc)
-    # LogCleaner blocked sensitive categories: credential
+    # LogPrivacy blocked sensitive categories: credential
 ```
 
 A `LogBlockedError` is typically a programming error: it means some code is
@@ -102,7 +102,7 @@ attempting to log data that should never be logged at all.
 All policies are immutable. Every method returns a new policy object.
 
 ```python
-from logcleaner import CleanerPolicy, EmailRule
+from logprivacy import CleanerPolicy, EmailRule
 
 # Add a rule on top of default
 policy = CleanerPolicy.default().add_rules(EmailRule())

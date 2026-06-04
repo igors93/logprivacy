@@ -1,5 +1,5 @@
-from logcleaner import clean_text
-from logcleaner.rules import TokenRule
+from logprivacy import clean_text
+from logprivacy.rules import TokenRule
 
 
 def test_token_rule_finds_bearer_token():
