@@ -1,5 +1,6 @@
 from logcleaner import clean_with_result
 
+
 def test_result_summary_is_safe():
     result = clean_with_result("john@example.com password=123")
     summary = result.summary()

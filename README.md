@@ -69,3 +69,45 @@ logger.warning("User john@example.com used token=abc123")
 ## Status
 
 Early development. Public API may still evolve.
+
+## Development checks
+
+Install the project with development dependencies:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+```
+
+Run the full local CI suite:
+
+```bash
+./scripts/ci.sh
+```
+
+Or run checks individually:
+
+```bash
+./scripts/format.sh       # format code with Ruff
+./scripts/lint.sh         # run Ruff lint checks
+./scripts/fix.sh          # format and apply safe Ruff fixes
+./scripts/typecheck.sh    # run mypy on src/
+./scripts/test.sh         # run pytest
+./scripts/build.sh        # build the package
+```
+
+Equivalent Python commands:
+
+```bash
+python -m ruff format .
+python -m ruff format --check .
+python -m ruff check .
+python -m ruff check . --fix
+python -m mypy src
+python -m pytest
+python -m build
+```
+
+GitHub Actions runs the same quality checks automatically on pushes and pull requests to `main`.

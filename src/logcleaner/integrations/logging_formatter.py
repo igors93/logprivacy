@@ -1,12 +1,18 @@
 """Python logging formatter that redacts the final formatted message."""
+
 from __future__ import annotations
+
 import logging
 from dataclasses import dataclass, field
+
 from logcleaner.cleaner import Cleaner
+
 
 @dataclass(slots=True)
 class LogCleanerFormatter(logging.Formatter):
     """Formatter that cleans the final formatted output."""
+
     cleaner: Cleaner = field(default_factory=Cleaner)
+
     def format(self, record: logging.LogRecord) -> str:
         return self.cleaner.clean_text(super().format(record))

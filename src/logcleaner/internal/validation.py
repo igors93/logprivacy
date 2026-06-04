@@ -1,6 +1,9 @@
 """Validation helpers."""
+
 from __future__ import annotations
+
 from logcleaner.exceptions import RuleValidationError
+
 
 def ensure_non_empty(name: str, value: str) -> None:
     """Raise when a string value is empty."""

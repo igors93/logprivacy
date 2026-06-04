@@ -1,4 +1,5 @@
 import logging
+
 from logcleaner import LogCleanerFilter
 
 logger = logging.getLogger("demo")

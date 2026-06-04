@@ -27,11 +27,11 @@ dependencies = []
 dev = ["build>=1.2", "pytest>=8", "ruff>=0.7", "mypy>=1.10"]
 
 [project.urls]
-Homepage = "https://github.com/your-name/logcleaner"
-Repository = "https://github.com/your-name/logcleaner"
-Documentation = "https://github.com/your-name/logcleaner/tree/main/docs"
-Issues = "https://github.com/your-name/logcleaner/issues"
-Changelog = "https://github.com/your-name/logcleaner/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/igors93/logcleaner"
+Repository = "https://github.com/igors93/logcleaner"
+Documentation = "https://github.com/igors93/logcleaner/tree/main/docs"
+Issues = "https://github.com/igors93/logcleaner/issues"
+Changelog = "https://github.com/igors93/logcleaner/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/logcleaner"]

@@ -16,10 +16,22 @@ from logcleaner.rules.token import TokenRule
 from logcleaner.rules.url import UrlRule
 
 __all__ = [
-    "Cleaner", "CleanerPolicy", "CustomRegexRule", "EmailRule", "Finding",
-    "LogCleanerError", "LogCleanerFilter", "LogCleanerFormatter", "RedactionResult",
-    "RuleValidationError", "SecretRule", "TokenRule", "UrlRule",
-    "clean", "clean_text", "clean_with_result",
+    "Cleaner",
+    "CleanerPolicy",
+    "CustomRegexRule",
+    "EmailRule",
+    "Finding",
+    "LogCleanerError",
+    "LogCleanerFilter",
+    "LogCleanerFormatter",
+    "RedactionResult",
+    "RuleValidationError",
+    "SecretRule",
+    "TokenRule",
+    "UrlRule",
+    "clean",
+    "clean_text",
+    "clean_with_result",
 ]
 
 __version__ = "0.1.0"

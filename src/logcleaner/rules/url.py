@@ -6,7 +6,7 @@ import re
 
 from logcleaner.rules.base import RegexRedactionRule
 
-_URL_PATTERN = r'''https?://[^\s'"<>]+'''
+_URL_PATTERN = r"""https?://[^\s'"<>]+"""
 
 
 class UrlRule(RegexRedactionRule):

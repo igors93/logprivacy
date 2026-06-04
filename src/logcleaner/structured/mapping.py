@@ -1,7 +1,10 @@
 """Mapping cleaning support."""
+
 from __future__ import annotations
+
 from collections.abc import Mapping
 from typing import Any
+
 
 def clean_mapping(mapping: Mapping[Any, Any], cleaner: Any, depth: int) -> dict[Any, Any]:
     """Return a cleaned dictionary copy."""

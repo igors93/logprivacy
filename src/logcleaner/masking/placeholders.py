@@ -1,4 +1,5 @@
 """Default placeholder values used when sensitive data is redacted."""
+
 EMAIL_PLACEHOLDER = "[EMAIL]"
 URL_PLACEHOLDER = "[URL]"
 SECRET_PLACEHOLDER = "[SECRET]"

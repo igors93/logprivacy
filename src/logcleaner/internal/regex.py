@@ -1,7 +1,10 @@
 """Regex helpers used internally."""
+
 from __future__ import annotations
+
 import re
-from typing import Pattern
+from re import Pattern
+
 
 def compile_case_insensitive(pattern: str) -> Pattern[str]:
     """Compile a regex pattern with IGNORECASE."""

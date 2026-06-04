@@ -1,7 +1,10 @@
 """Sequence cleaning support."""
+
 from __future__ import annotations
+
 from collections.abc import Sequence
 from typing import Any
+
 
 def clean_sequence(sequence: Sequence[Any], cleaner: Any, depth: int) -> Any:
     """Return a cleaned copy of a sequence."""
