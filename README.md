@@ -1,6 +1,5 @@
-# LogPrivacy
-
 <p align="center">
+  <h1 align="center">LogPrivacy</h1>
   <a href="https://github.com/igors93/logprivacy/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/igors93/logprivacy/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue"></a>
   <a href="https://github.com/igors93/logprivacy"><img alt="status alpha" src="https://img.shields.io/badge/status-alpha-orange"></a>
@@ -9,7 +8,7 @@
   <a href="LICENSE"><img alt="license MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
-**Simple by default, powerful by composition, safe by guidance.**
+<p align="center"><strong>Simple by default, powerful by composition, safe by guidance.</strong></p>
 
 LogPrivacy is a zero-dependency Python library that prevents accidental leaks of
 sensitive data in logs, debug output, strings, dictionaries, files, and standard
