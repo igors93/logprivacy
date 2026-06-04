@@ -11,10 +11,11 @@ T = TypeVar("T")
 @dataclass(frozen=True, slots=True)
 class Finding:
     """
-    A sensitive value found in text.
+    A sensitive value detected in text.
 
-    The original matched value is stored so advanced users can inspect findings.
-    Do not log findings directly if you want to avoid exposing sensitive data.
+    The original ``matched`` value is stored for inspection. Do not log
+    ``Finding`` objects directly — the ``matched`` field contains the original
+    sensitive text.
     """
 
     rule_name: str
@@ -62,7 +63,12 @@ class Finding:
 
 @dataclass(frozen=True, slots=True)
 class RedactionResult(Generic[T]):
-    """A cleaned value plus information about what was changed."""
+    """
+    The result of a cleaning operation, pairing the cleaned value with finding metadata.
+
+    ``original`` and ``cleaned`` differ only when at least one finding was redacted.
+    Use ``explain()`` to get a human-readable breakdown of what changed.
+    """
 
     original: T
     cleaned: T

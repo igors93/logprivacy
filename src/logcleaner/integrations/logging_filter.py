@@ -24,10 +24,14 @@ class LogCleanerFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         """Clean the log record and allow it to be emitted."""
         try:
+            # getMessage() renders "msg % args" into a single string so both
+            # the format string and the argument values are cleaned together.
             record.msg = self.cleaner.clean_text(record.getMessage())
         except LogBlockedError:
             if self.drop_blocked:
                 return False
             raise
+        # Clear args after rendering so the logging formatter does not
+        # re-apply %-interpolation with the original, unclean argument values.
         record.args = ()
         return True

@@ -15,10 +15,14 @@ def select_non_overlapping(findings: tuple[Finding, ...]) -> tuple[Finding, ...]
     This avoids double-redacting values such as emails inside URLs.
     """
     selected: list[Finding] = []
+    # Start before the first valid index so the first finding is never skipped.
     last_end = -1
 
+    # Sort by start position; break ties by preferring the longer match so the
+    # greedy rule wins when multiple patterns fire at the same offset.
     for finding in sorted(findings, key=lambda item: (item.start, -item.length)):
         if finding.start < last_end:
+            # This finding overlaps the previously accepted one — skip it.
             continue
         selected.append(finding)
         last_end = finding.end

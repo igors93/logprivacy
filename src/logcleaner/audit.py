@@ -12,23 +12,36 @@ _HIGH_RISK = {"credential", "token", "secret", "credit_card"}
 
 @dataclass(frozen=True, slots=True)
 class AuditReport:
-    """A safe report describing whether a value contains sensitive data."""
+    """
+    A safe report describing whether a value contains sensitive data.
+
+    Created by ``audit()`` or ``Cleaner.audit()``. Never exposes the original
+    sensitive values — only categories, counts, and a risk level.
+
+    Example::
+
+        report = audit("Authorization: Bearer secret-token")
+        report.safe        # False
+        report.risk_level  # "high"
+        report.categories  # ("token",)
+        report.describe()
+    """
 
     findings: tuple[Finding, ...]
 
     @property
     def safe(self) -> bool:
-        """Return True when no sensitive values were found."""
+        """Return ``True`` when no sensitive values were found."""
         return not self.findings
 
     @property
     def finding_count(self) -> int:
-        """Return the number of sensitive findings."""
+        """Return the total number of sensitive findings."""
         return len(self.findings)
 
     @property
     def categories(self) -> tuple[str, ...]:
-        """Return distinct finding categories in order of appearance."""
+        """Return distinct finding categories in order of first appearance."""
         seen: list[str] = []
         for finding in self.findings:
             if finding.category not in seen:
@@ -37,7 +50,11 @@ class AuditReport:
 
     @property
     def risk_level(self) -> str:
-        """Return a coarse risk level: none, low, medium, or high."""
+        """
+        Return a coarse risk level string: ``"none"``, ``"low"``, ``"medium"``, or ``"high"``.
+
+        High-risk categories are: credential, token, secret, credit_card.
+        """
         if not self.findings:
             return "none"
         if any(finding.category in _HIGH_RISK for finding in self.findings):
@@ -47,7 +64,7 @@ class AuditReport:
         return "low"
 
     def summary(self) -> dict[str, Any]:
-        """Return a safe summary that does not include original matched values."""
+        """Return a structured summary dict that does not include original sensitive values."""
         counts: dict[str, int] = {}
         for finding in self.findings:
             counts[finding.category] = counts.get(finding.category, 0) + 1

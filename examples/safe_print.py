@@ -1,3 +1,9 @@
+"""Drop-in replacement for print() that cleans values before printing."""
+
 from logcleaner import safe_print
 
-safe_print("token=abc123456789", {"password": "123456"})
+safe_print("User john@example.com used token=abc123456789")
+# User [EMAIL] used token=[SECRET]
+
+safe_print("payload:", {"password": "hunter2", "status": "ok"})
+# payload: {'password': '[SECRET]', 'status': 'ok'}

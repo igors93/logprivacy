@@ -19,16 +19,28 @@ def clean(value: Any, *, policy: CleanerPolicy | None = None) -> Any:
     """
     Return a cleaned copy of a string or structured value.
 
-    This is the easiest entry point:
+    Accepts strings, dicts, lists, and tuples. Nested structures are traversed
+    recursively. This is the most common entry point.
+
+    Example::
 
         clean("email=john@example.com password=123")
+        # "email=[EMAIL] password=[SECRET]"
+
+        clean({"password": "123", "status": "ok"})
+        # {"password": "[SECRET]", "status": "ok"}
     """
     cleaner = _DEFAULT_CLEANER if policy is None else Cleaner(policy=policy)
     return cleaner.clean(value)
 
 
 def clean_text(text: str, *, policy: CleanerPolicy | None = None) -> str:
-    """Return a cleaned string."""
+    """
+    Return a cleaned string.
+
+    Like ``clean()`` but always returns a string. Use this when you know the
+    input is a string and want a typed return value.
+    """
     cleaner = _DEFAULT_CLEANER if policy is None else Cleaner(policy=policy)
     return cleaner.clean_text(text)
 
@@ -38,25 +50,62 @@ def clean_with_result(
     *,
     policy: CleanerPolicy | None = None,
 ) -> RedactionResult[str]:
-    """Return a rich result containing the cleaned text and detected findings."""
+    """
+    Return a ``RedactionResult`` containing the cleaned text and detected findings.
+
+    Use this when you need to know what was redacted, not just the cleaned output.
+
+    Example::
+
+        result = clean_with_result("john@example.com")
+        result.cleaned        # "[EMAIL]"
+        result.finding_count  # 1
+        result.categories     # ("email",)
+    """
     cleaner = _DEFAULT_CLEANER if policy is None else Cleaner(policy=policy)
     return cleaner.clean_with_result(text)
 
 
 def audit(value: Any, *, policy: CleanerPolicy | None = None) -> AuditReport:
-    """Return a safe report of sensitive values found in a value."""
+    """
+    Return an ``AuditReport`` describing sensitive data found in a value.
+
+    Does not modify the input. Works on strings, dicts, lists, and tuples.
+    Use this to check whether a value is safe to log before actually logging it.
+
+    Example::
+
+        report = audit({"password": "123"})
+        report.safe        # False
+        report.risk_level  # "high"
+        report.categories  # ("credential",)
+    """
     cleaner = _DEFAULT_CLEANER if policy is None else Cleaner(policy=policy)
     return cleaner.audit(value)
 
 
 def explain(text: str, *, policy: CleanerPolicy | None = None) -> str:
-    """Return a human-readable explanation of how text is cleaned."""
+    """
+    Return a human-readable explanation of what ``clean()`` would redact.
+
+    Useful for debugging policies and understanding why something is redacted.
+    """
     cleaner = _DEFAULT_CLEANER if policy is None else Cleaner(policy=policy)
     return cleaner.explain(text)
 
 
 def assert_clean(value: Any, *, policy: CleanerPolicy | None = None) -> None:
-    """Raise LogCleanerAssertionError if sensitive data is found."""
+    """
+    Raise ``LogCleanerAssertionError`` if sensitive data is found in a value.
+
+    Intended for tests and CI pipelines. Works on strings, dicts, lists, and
+    tuples. Passes silently when the value is safe.
+
+    Example::
+
+        def test_response_payload_is_safe():
+            assert_clean(response.json())
+    """
     report = audit(value, policy=policy)
     if not report.safe:
         categories = ", ".join(report.categories)
@@ -69,7 +118,17 @@ def assert_clean(value: Any, *, policy: CleanerPolicy | None = None) -> None:
 def safe_print(
     *values: Any, sep: str = " ", end: str = "\n", policy: CleanerPolicy | None = None
 ) -> None:
-    """Print values after cleaning them."""
+    """
+    Print values after cleaning them.
+
+    Drop-in replacement for ``print()`` during debugging. Accepts the same
+    ``sep`` and ``end`` keyword arguments.
+
+    Example::
+
+        safe_print("token=abc123456789", {"password": "123456"})
+        # token=[SECRET] {'password': '[SECRET]'}
+    """
     cleaner = _DEFAULT_CLEANER if policy is None else Cleaner(policy=policy)
     rendered = sep.join(str(cleaner.clean(value)) for value in values)
     print(rendered, end=end)
@@ -81,14 +140,34 @@ def get_safe_logger(
     policy: CleanerPolicy | None = None,
     level: int | None = None,
 ) -> logging.Logger:
-    """Return a stdlib logger with a LogCleanerFilter attached."""
+    """
+    Return a stdlib logger with a ``LogCleanerFilter`` attached.
+
+    Calling this function multiple times with the same logger name is safe:
+    a second call without an explicit ``policy`` reuses the existing filter.
+    A second call with an explicit ``policy`` replaces the filter so the new
+    policy takes effect immediately.
+
+    Example::
+
+        logger = get_safe_logger(__name__)
+        logger.warning("User john@example.com used password=123456")
+        # emits: User [EMAIL] used password=[SECRET]
+    """
     logger = logging.getLogger(name)
     if level is not None:
         logger.setLevel(level)
 
-    cleaner = Cleaner(policy=policy or CleanerPolicy.default())
-    if not any(isinstance(item, LogCleanerFilter) for item in logger.filters):
+    existing = next((f for f in logger.filters if isinstance(f, LogCleanerFilter)), None)
+
+    if existing is None:
+        cleaner = Cleaner(policy=policy or CleanerPolicy.default())
         logger.addFilter(LogCleanerFilter(cleaner=cleaner))
+    elif policy is not None:
+        # Replace the filter so the caller's explicit policy takes effect
+        logger.removeFilter(existing)
+        logger.addFilter(LogCleanerFilter(cleaner=Cleaner(policy=policy)))
+
     return logger
 
 

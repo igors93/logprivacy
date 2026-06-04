@@ -15,6 +15,10 @@ def _digits(value: str) -> str:
 
 
 def _passes_luhn(value: str) -> bool:
+    # Standard Luhn algorithm: double every second digit from the right,
+    # subtract 9 when the result exceeds 9, then check that the total is
+    # divisible by 10. Used to reject obvious false positives (random numbers
+    # have only a ~10 % chance of passing by accident).
     digits = [int(char) for char in value]
     checksum = 0
     parity = len(digits) % 2

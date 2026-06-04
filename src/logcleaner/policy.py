@@ -51,13 +51,22 @@ def resolve_masking(masking: MaskingStrategy | MaskingChoice) -> MaskingStrategy
 @dataclass(frozen=True, slots=True)
 class CleanerPolicy:
     """
-    Configuration for Cleaner.
+    Configuration for a ``Cleaner`` instance.
 
-    A policy answers:
-    - which rules are active
-    - how findings are masked
-    - how structured data should be traversed
-    - which categories should be blocked instead of logged
+    A policy controls:
+
+    - which rules are active (``rules``)
+    - how findings are masked (``masking``)
+    - how structured data is traversed (``max_depth``, ``sensitive_keys``)
+    - which categories raise an exception instead of being redacted (``block_categories``)
+
+    Use the factory class methods to get a sensible starting point, then compose
+    further with ``add_rules()``, ``with_masking()``, or ``block()``.
+
+    Example::
+
+        policy = CleanerPolicy.default(masking="partial")
+        policy = CleanerPolicy.strict().block("credential")
     """
 
     rules: tuple[RedactionRule, ...] = field(default_factory=tuple)
@@ -77,28 +86,50 @@ class CleanerPolicy:
 
     @classmethod
     def default(cls, *, masking: MaskingStrategy | MaskingChoice = "placeholder") -> CleanerPolicy:
-        """Return the default balanced policy."""
+        """
+        Return the balanced default policy.
+
+        Detects emails, credentials, tokens, secrets, URLs, and credit-card-like values.
+        Safe for general-purpose log cleaning.
+        """
         from logcleaner.rule_sets.default import default_rules
 
         return cls(rules=default_rules(), masking=resolve_masking(masking))
 
     @classmethod
     def strict(cls, *, masking: MaskingStrategy | MaskingChoice = "placeholder") -> CleanerPolicy:
-        """Return a stricter policy for sensitive environments."""
+        """
+        Return a stricter policy for sensitive environments.
+
+        Extends ``default()`` with IP address and phone number detection.
+        Suitable when internal IPs or phone numbers must not appear in logs.
+        """
         from logcleaner.rule_sets.strict import strict_rules
 
         return cls(rules=strict_rules(), masking=resolve_masking(masking))
 
     @classmethod
     def web(cls, *, masking: MaskingStrategy | MaskingChoice = "placeholder") -> CleanerPolicy:
-        """Return a policy focused on web and HTTP logs."""
+        """
+        Return a policy focused on web and HTTP logs.
+
+        Detects URLs, credentials, tokens, and secrets. Omits email, credit
+        card, IP address, and phone rules. Suitable for HTTP access log cleaning.
+        """
         from logcleaner.rule_sets.web import web_rules
 
         return cls(rules=web_rules(), masking=resolve_masking(masking))
 
     @classmethod
     def production(cls) -> CleanerPolicy:
-        """Return a production-oriented policy that blocks secrets and credentials."""
+        """
+        Return a production-safety policy that raises on high-risk categories.
+
+        Extends ``strict()`` and blocks the ``credential``, ``token``, ``secret``,
+        and ``credit_card`` categories so that a ``LogBlockedError`` is raised if any
+        of those values reach a log statement. Use this when you want logging code to
+        fail loudly instead of silently masking sensitive data.
+        """
         return cls.strict().block("credential", "token", "secret", "credit_card")
 
     def add_rules(self, *rules: RedactionRule) -> CleanerPolicy:
