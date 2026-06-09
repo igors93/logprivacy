@@ -9,7 +9,7 @@ from typing import Any
 from logprivacy.audit import AuditReport
 from logprivacy.cleaner import Cleaner
 from logprivacy.exceptions import LogPrivacyAssertionError
-from logprivacy.integrations.logging_filter import LogPrivacyFilter
+from logprivacy.integrations.logging_filter import LogPrivacyFilter, install_handler_filters
 from logprivacy.policy import CleanerPolicy
 from logprivacy.result import RedactionResult
 
@@ -140,14 +140,21 @@ def get_safe_logger(
     *,
     policy: CleanerPolicy | None = None,
     level: int | None = None,
+    drop_blocked: bool | None = None,
 ) -> logging.Logger:
     """
-    Return a stdlib logger with a ``LogPrivacyFilter`` attached.
+    Return a stdlib logger protected by ``LogPrivacyFilter``.
 
-    Calling this function multiple times with the same logger name is safe:
-    a second call without an explicit ``policy`` reuses the existing filter.
-    A second call with an explicit ``policy`` replaces the filter so the new
-    policy takes effect immediately.
+    The logger's own records are cleaned directly. Filters scoped to its
+    namespace are also installed on every currently configured handler in the
+    propagation chain, protecting child loggers such as ``app.http`` while
+    leaving unrelated logger namespaces unchanged.
+
+    Call this function after configuring logging handlers. Calling it again is
+    safe and refreshes handler protection. A second call without an explicit
+    ``policy`` reuses the existing cleaner; an explicit policy replaces it.
+    ``drop_blocked=False`` makes production block mode raise ``LogBlockedError``
+    instead of silently dropping the record.
 
     Example::
 
@@ -159,16 +166,37 @@ def get_safe_logger(
     if level is not None:
         logger.setLevel(level)
 
-    existing = next((f for f in logger.filters if isinstance(f, LogPrivacyFilter)), None)
+    existing = next(
+        (
+            candidate
+            for candidate in logger.filters
+            if isinstance(candidate, LogPrivacyFilter) and candidate.logger_prefix is None
+        ),
+        None,
+    )
 
     if existing is None:
         cleaner = Cleaner(policy=policy or CleanerPolicy.default())
-        logger.addFilter(LogPrivacyFilter(cleaner=cleaner))
-    elif policy is not None:
-        # Replace the filter so the caller's explicit policy takes effect
-        logger.removeFilter(existing)
-        logger.addFilter(LogPrivacyFilter(cleaner=Cleaner(policy=policy)))
+        effective_drop_blocked = True if drop_blocked is None else drop_blocked
+        existing = LogPrivacyFilter(
+            cleaner=cleaner,
+            drop_blocked=effective_drop_blocked,
+        )
+        logger.addFilter(existing)
+    else:
+        if policy is not None:
+            existing.cleaner = Cleaner(policy=policy)
+        if drop_blocked is not None:
+            existing.drop_blocked = drop_blocked
 
+        cleaner = existing.cleaner
+        effective_drop_blocked = existing.drop_blocked
+
+    install_handler_filters(
+        logger,
+        cleaner=cleaner,
+        drop_blocked=effective_drop_blocked,
+    )
     return logger
 
 
