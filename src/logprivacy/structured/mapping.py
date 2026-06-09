@@ -56,9 +56,13 @@ def clean_mapping(
                 break
 
             key_text, trusted_key = safe_mapping_key_text(key)
-            output_key: Any = (
-                cleaner.clean_text(key_text) if cleaner.policy.clean_mapping_keys else key
-            )
+            if trusted_key:
+                preferred_key: Any = (
+                    cleaner.clean_text(key_text) if cleaner.policy.clean_mapping_keys else key
+                )
+            else:
+                preferred_key = cleaner._sanitize_location_text(key_text)
+            output_key = _unique_output_key(preferred_key, cleaned)
 
             if not trusted_key or cleaner.policy.is_sensitive_key(key_text):
                 cleaned[output_key] = mask_sensitive_value(
@@ -77,3 +81,18 @@ def clean_mapping(
         return cleaned
     finally:
         state.active.discard(mapping_id)
+
+
+def _unique_output_key(candidate: Any, cleaned: dict[Any, Any]) -> Any:
+    """Return a collision-free output key without invoking arbitrary user code."""
+    if candidate not in cleaned:
+        return candidate
+    if not isinstance(candidate, str):
+        return candidate
+
+    suffix = 2
+    while True:
+        unique = f"{candidate}#{suffix}"
+        if unique not in cleaned:
+            return unique
+        suffix += 1

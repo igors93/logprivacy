@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
 
 from logprivacy.audit import AuditReport
 from logprivacy.exceptions import LogBlockedError
+from logprivacy.internal.audit_location import append_mapping_key, append_sequence_index
 from logprivacy.internal.replacement import apply_replacements, select_non_overlapping
 from logprivacy.internal.traversal import (
     LIMIT_ITERATION_ERROR,
@@ -19,6 +19,7 @@ from logprivacy.internal.traversal import (
     TraversalState,
     safe_mapping_key_text,
 )
+from logprivacy.masking.strategy import PlaceholderMaskingStrategy
 from logprivacy.policy import CleanerPolicy
 from logprivacy.result import Finding, RedactionResult
 from logprivacy.structured.mapping import clean_mapping
@@ -26,14 +27,6 @@ from logprivacy.structured.sequence import clean_sequence
 
 _EXACT_BYTE_TYPES = frozenset({bytes, bytearray, memoryview})
 _EXACT_SCALAR_TYPES = frozenset({int, float, complex, bool})
-_SIMPLE_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
-
-def _extend_path(parent: str, key: str) -> str:
-    """Return a JSONPath segment for a mapping key, using dot or bracket notation."""
-    if _SIMPLE_KEY.match(key):
-        return f"{parent}.{key}"
-    return f'{parent}["{key}"]'
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,8 +149,8 @@ class Cleaner:
                     break
 
                 key_text, trusted = safe_mapping_key_text(key)
-                safe_key = self.clean_text(key_text) if trusted else key_text
-                child_path = _extend_path(path, safe_key)
+                safe_key = self._sanitize_location_text(key_text)
+                child_path = append_mapping_key(path, safe_key)
 
                 if self.policy.is_sensitive_key(key):
                     matched = self._sensitive_value_marker(item)
@@ -227,12 +220,25 @@ class Cleaner:
                         item,
                         depth=depth + 1,
                         state=state,
-                        path=f"{path}[{current_index}]",
+                        path=append_sequence_index(path, current_index),
                     )
                 )
             return tuple(findings)
         finally:
             state.active.discard(value_id)
+
+    def _sanitize_location_text(self, text: str) -> str:
+        """Redact a safe label without applying block-mode side effects."""
+        findings = select_non_overlapping(self._find(text))
+        if not findings:
+            return text
+        cleaned, _ = apply_replacements(
+            text,
+            findings,
+            rules=self.policy.rules,
+            masking=PlaceholderMaskingStrategy(),
+        )
+        return cleaned
 
     def _bounded_findings(
         self, text: str, state: TraversalState, *, path: str = ""

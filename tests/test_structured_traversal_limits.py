@@ -142,7 +142,8 @@ def test_hostile_mapping_key_is_never_stringified_and_value_is_masked() -> None:
     cleaned = clean({key: "secret-value"})
     report = audit({key: "secret-value"})
 
-    assert cleaned[key] == "[SECRET]"
+    assert key not in cleaned
+    assert cleaned == {"<HostileKey>": "[SECRET]"}
     assert key.stringified is False
     assert report.complete is True
     assert report.safe is False

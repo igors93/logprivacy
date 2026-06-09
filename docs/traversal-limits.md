@@ -54,3 +54,11 @@ incomplete audits.
 
 Unknown mapping-key objects are never stringified. Their values are masked
 fail-closed because their key representation cannot be trusted safely.
+
+## Untrusted mapping keys
+
+Arbitrary mapping-key objects are not retained in the cleaned dictionary because
+their later `repr()` could disclose sensitive data. They are replaced with a
+bounded type label such as `<CustomKey>`, and their associated values are masked
+fail-closed. When multiple transformed keys would collide, LogPrivacy preserves
+all entries by adding deterministic suffixes such as `#2` and `#3`.

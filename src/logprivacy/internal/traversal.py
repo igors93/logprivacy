@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TypeVar, cast
+from typing import TypeVar
+
+from logprivacy.internal.audit_location import safe_mapping_key_text as _safe_key_text
 
 MAX_DEPTH_PLACEHOLDER = "[MAX_DEPTH]"
 TRUNCATED_PLACEHOLDER = "[TRUNCATED]"
@@ -70,18 +72,19 @@ class TraversalState:
 def safe_mapping_key_text(key: object) -> tuple[str, bool]:
     """Return a bounded key label and whether conversion avoided user code.
 
-    Arbitrary key objects are represented only by their type name. The caller can
-    then fail closed by treating the associated value as sensitive.
+    Exact built-in scalar and byte-like keys are trusted because converting them
+    cannot invoke user-defined methods. Arbitrary key objects are represented by
+    a sanitized type label and must be handled fail-closed by callers.
     """
     key_type = type(key)
-    if key_type is str:
-        return cast(str, key), True
-    if key_type in _EXACT_SCALAR_TYPES:
-        return repr(key), True
-    if key_type is bytes:
-        return cast(bytes, key).decode("utf-8", errors="replace"), True
-    if key_type is bytearray:
-        return bytes(cast(bytearray, key)).decode("utf-8", errors="replace"), True
-    if key_type is memoryview:
-        return bytes(cast(memoryview, key)).decode("utf-8", errors="replace"), True
-    return f"<{key_type.__name__}>", False
+    trusted = (
+        key_type is str
+        or key_type in _EXACT_SCALAR_TYPES
+        or key_type
+        in {
+            bytes,
+            bytearray,
+            memoryview,
+        }
+    )
+    return _safe_key_text(key), trusted

@@ -62,8 +62,12 @@ class AuditReport:
 
     @property
     def locations(self) -> tuple[str, ...]:
-        """Return finding locations in order of appearance, omitting unlocated findings."""
-        return tuple(f.location for f in self.findings if f.location)
+        """Return distinct finding locations in order of first appearance."""
+        seen: list[str] = []
+        for finding in self.findings:
+            if finding.location and finding.location not in seen:
+                seen.append(finding.location)
+        return tuple(seen)
 
     def details(self) -> list[dict[str, Any]]:
         """Return safe structured details for each finding, without matched values."""

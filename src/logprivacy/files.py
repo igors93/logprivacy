@@ -12,6 +12,7 @@ from typing import cast
 
 from logprivacy.audit import AuditReport
 from logprivacy.cleaner import Cleaner
+from logprivacy.internal.audit_location import format_file_location
 from logprivacy.internal.traversal import LIMIT_MAX_FINDINGS
 from logprivacy.policy import CleanerPolicy
 from logprivacy.result import Finding
@@ -32,7 +33,7 @@ def scan_file(
     findings: list[Finding] = []
     limitations: list[str] = []
     file_path = Path(path)
-    safe_name = cleaner.clean_text(file_path.name)
+    safe_name = cleaner._sanitize_location_text(file_path.name)
     line_number = 0
     with file_path.open("r", encoding=encoding, errors="replace") as stream:
         for line in stream:
@@ -50,7 +51,13 @@ def scan_file(
 
             line_findings = report.findings[:remaining]
             findings.extend(
-                f.with_location(f"{safe_name}:{line_number}:{f.start + 1}")
+                f.with_location(
+                    format_file_location(
+                        safe_name,
+                        line=line_number,
+                        column=f.start + 1,
+                    )
+                )
                 for f in line_findings
             )
             if len(report.findings) > remaining or len(findings) >= cleaner.policy.max_findings:

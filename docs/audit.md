@@ -44,3 +44,15 @@ Only the file name is included, not its absolute directory path. File names and
 mapping keys are sanitized before they are placed in a report. `repr()`,
 `summary()`, `details()`, and `describe()` do not include matched sensitive
 values.
+
+## Safe location formatting
+
+Location components are bounded and encoded before they are exposed. Quotes and
+backslashes use JSON escaping, while control and Unicode formatting characters
+are rendered as inert escape sequences. Repeated findings at the same source
+location appear only once in `report.locations`; per-finding entries remain
+available through `report.details()`.
+
+Location formatting never relies on arbitrary mapping-key `__str__()` or
+`__repr__()` implementations. Unknown key objects are represented by a sanitized
+type label instead.
