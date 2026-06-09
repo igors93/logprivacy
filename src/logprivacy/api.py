@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from logprivacy.audit import AuditReport
 from logprivacy.cleaner import Cleaner
 from logprivacy.exceptions import LogPrivacyAssertionError
 from logprivacy.integrations.logging_filter import LogPrivacyFilter, install_handler_filters
-from logprivacy.internal.rendering import safe_render
+from logprivacy.internal.rendering import (
+    DEFAULT_MAX_RENDER_CHARS,
+    DEFAULT_MAX_RENDER_ITEMS,
+    safe_render_values,
+    sanitize_output_text,
+)
 from logprivacy.policy import CleanerPolicy
 from logprivacy.result import RedactionResult
 
@@ -118,13 +123,22 @@ def assert_clean(value: Any, *, policy: CleanerPolicy | None = None) -> None:
 
 
 def safe_print(
-    *values: Any, sep: str = " ", end: str = "\n", policy: CleanerPolicy | None = None
+    *values: Any,
+    sep: str | None = " ",
+    end: str | None = "\n",
+    file: TextIO | None = None,
+    flush: bool = False,
+    policy: CleanerPolicy | None = None,
+    max_items: int = DEFAULT_MAX_RENDER_ITEMS,
+    max_chars: int = DEFAULT_MAX_RENDER_CHARS,
 ) -> None:
     """
-    Print values after cleaning them.
+    Print sanitized diagnostic values with bounded resource usage.
 
-    Drop-in replacement for ``print()`` during debugging. Accepts the same
-    ``sep`` and ``end`` keyword arguments.
+    ``safe_print`` mirrors the common ``print()`` arguments while deliberately
+    using safe representations for arbitrary objects and containers. Control
+    characters are escaped, recursive or hostile containers fail closed, and
+    rendering is capped by ``max_items`` and ``max_chars``.
 
     Example::
 
@@ -132,10 +146,32 @@ def safe_print(
         # token=[SECRET] {'password': '[SECRET]'}
     """
     cleaner = _DEFAULT_CLEANER if policy is None else Cleaner(policy=policy)
-    safe_separator = cleaner.clean_text(sep)
-    safe_end = cleaner.clean_text(end)
-    rendered = safe_separator.join(safe_render(value, cleaner) for value in values)
-    print(rendered, end=safe_end)
+    raw_separator = " " if sep is None else sep
+    raw_end = "\n" if end is None else end
+
+    if not isinstance(raw_separator, str):
+        raise TypeError(f"sep must be None or a string, not {type(raw_separator).__name__}")
+    if not isinstance(raw_end, str):
+        raise TypeError(f"end must be None or a string, not {type(raw_end).__name__}")
+
+    safe_separator = sanitize_output_text(
+        cleaner.clean_text(raw_separator),
+        max_chars=max_chars,
+    )
+    safe_end = sanitize_output_text(
+        cleaner.clean_text(raw_end),
+        allow_newline=True,
+        allow_tab=True,
+        max_chars=max_chars,
+    )
+    rendered = safe_render_values(
+        values,
+        cleaner,
+        separator=safe_separator,
+        max_items=max_items,
+        max_chars=max_chars,
+    )
+    print(rendered, end=safe_end, file=file, flush=flush)
 
 
 def get_safe_logger(
