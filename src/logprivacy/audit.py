@@ -8,6 +8,7 @@ from typing import Any
 from logprivacy.result import Finding
 
 _HIGH_RISK = {"credential", "token", "secret", "credit_card"}
+_MAX_DESCRIBED_FINDINGS = 20
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -15,17 +16,9 @@ class AuditReport:
     """
     A safe report describing whether a value contains sensitive data.
 
-    Created by ``audit()`` or ``Cleaner.audit()``. The nested findings remain
-    available for explicit programmatic inspection, but ``repr()`` and ``str()``
-    expose only aggregate, non-sensitive information.
-
-    Example::
-
-        report = audit("Authorization: Bearer secret-token")
-        report.safe        # False
-        report.risk_level  # "high"
-        report.categories  # ("token",)
-        report.describe()
+    Created by ``audit()`` or ``Cleaner.audit()``. Findings expose safe source
+    locations such as ``$.user.password`` or ``app.log:12:5`` while original
+    matched values remain excluded from normal representations and summaries.
     """
 
     findings: tuple[Finding, ...] = field(repr=False)
@@ -37,7 +30,8 @@ class AuditReport:
             f"safe={self.safe!r}, "
             f"risk_level={self.risk_level!r}, "
             f"finding_count={self.finding_count}, "
-            f"categories={self.categories!r})"
+            f"categories={self.categories!r}, "
+            f"location_count={len(self.locations)})"
         )
 
     @property
@@ -60,12 +54,17 @@ class AuditReport:
         return tuple(seen)
 
     @property
-    def risk_level(self) -> str:
-        """
-        Return a coarse risk level string: ``"none"``, ``"low"``, ``"medium"``, or ``"high"``.
+    def locations(self) -> tuple[str, ...]:
+        """Return distinct safe source locations in order of first appearance."""
+        seen: list[str] = []
+        for finding in self.findings:
+            if finding.location and finding.location not in seen:
+                seen.append(finding.location)
+        return tuple(seen)
 
-        High-risk categories are: credential, token, secret, credit_card.
-        """
+    @property
+    def risk_level(self) -> str:
+        """Return ``none``, ``low``, ``medium``, or ``high``."""
         if not self.findings:
             return "none"
         if any(finding.category in _HIGH_RISK for finding in self.findings):
@@ -75,7 +74,7 @@ class AuditReport:
         return "low"
 
     def summary(self) -> dict[str, Any]:
-        """Return a structured summary dict that does not include original sensitive values."""
+        """Return aggregate safe data, including distinct finding locations."""
         counts: dict[str, int] = {}
         for finding in self.findings:
             counts[finding.category] = counts.get(finding.category, 0) + 1
@@ -85,10 +84,25 @@ class AuditReport:
             "finding_count": self.finding_count,
             "categories": list(self.categories),
             "counts": counts,
+            "locations": list(self.locations),
         }
 
+    def details(self) -> list[dict[str, Any]]:
+        """Return per-finding safe details without matches, metadata, or replacements."""
+        return [
+            {
+                "rule_name": finding.rule_name,
+                "category": finding.category,
+                "location": finding.location,
+                "start": finding.start,
+                "end": finding.end,
+                "reason": finding.reason,
+            }
+            for finding in self.findings
+        ]
+
     def describe(self) -> str:
-        """Return a human-readable safe report."""
+        """Return a bounded human-readable report with safe locations."""
         if self.safe:
             return "LogPrivacy audit: safe. No sensitive values were found."
 
@@ -99,4 +113,16 @@ class AuditReport:
             f"Findings: {self.finding_count}",
             f"Categories: {', '.join(self.categories)}",
         ]
+
+        located = [finding for finding in self.findings if finding.location]
+        if located:
+            lines.extend(("", "Locations:"))
+            for index, finding in enumerate(located[:_MAX_DESCRIBED_FINDINGS], start=1):
+                lines.append(
+                    f"{index}. {finding.category} at {finding.location} (rule: {finding.rule_name})"
+                )
+            remaining = len(located) - _MAX_DESCRIBED_FINDINGS
+            if remaining > 0:
+                lines.append(f"... and {remaining} more finding(s)")
+
         return "\n".join(lines)

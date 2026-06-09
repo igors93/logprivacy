@@ -12,6 +12,7 @@ from typing import cast
 
 from logprivacy.audit import AuditReport
 from logprivacy.cleaner import Cleaner
+from logprivacy.internal.audit_location import format_file_location
 from logprivacy.policy import CleanerPolicy
 from logprivacy.result import Finding
 
@@ -30,9 +31,17 @@ def scan_file(
     cleaner = Cleaner(policy=policy or CleanerPolicy.default())
     findings: list[Finding] = []
     file_path = Path(path)
+    source_name = cleaner._sanitize_location_text(file_path.name)
+
     with file_path.open("r", encoding=encoding, errors="replace") as stream:
-        for line in stream:
-            findings.extend(cleaner.audit(line).findings)
+        for line_number, line in enumerate(stream, start=1):
+            for finding in cleaner.audit(line).findings:
+                location = format_file_location(
+                    source_name,
+                    line=line_number,
+                    column=finding.start + 1,
+                )
+                findings.append(finding.with_location(location))
     return AuditReport(tuple(findings))
 
 

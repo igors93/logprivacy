@@ -26,16 +26,19 @@ class Finding:
     replacement: str = ""
     reason: str = ""
     metadata: dict[str, str] = field(default_factory=dict, repr=False)
+    location: str = ""
 
     def __repr__(self) -> str:
         """Return a safe representation without matched or derived sensitive values."""
+        location = f", location={self.location!r}" if self.location else ""
         return (
             f"{type(self).__name__}("
             f"rule_name={self.rule_name!r}, "
             f"category={self.category!r}, "
             f"start={self.start}, "
             f"end={self.end}, "
-            f"has_replacement={bool(self.replacement)!r})"
+            f"has_replacement={bool(self.replacement)!r}"
+            f"{location})"
         )
 
     @property
@@ -54,6 +57,21 @@ class Finding:
             replacement=replacement,
             reason=self.reason,
             metadata=dict(self.metadata),
+            location=self.location,
+        )
+
+    def with_location(self, location: str) -> Finding:
+        """Return this finding with a safe human-readable source location."""
+        return Finding(
+            rule_name=self.rule_name,
+            category=self.category,
+            start=self.start,
+            end=self.end,
+            matched=self.matched,
+            replacement=self.replacement,
+            reason=self.reason,
+            metadata=dict(self.metadata),
+            location=location,
         )
 
     def to_dict(
@@ -77,6 +95,8 @@ class Finding:
             "replacement": self.replacement,
             "reason": self.reason,
         }
+        if self.location:
+            data["location"] = self.location
         if include_match:
             data["matched"] = self.matched
         if include_metadata:
