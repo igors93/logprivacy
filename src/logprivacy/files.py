@@ -12,7 +12,7 @@ from typing import cast
 
 from logprivacy.audit import AuditReport
 from logprivacy.cleaner import Cleaner
-from logprivacy.internal.audit_location import format_file_location
+from logprivacy.internal.traversal import LIMIT_MAX_FINDINGS
 from logprivacy.policy import CleanerPolicy
 from logprivacy.result import Finding
 
@@ -30,19 +30,39 @@ def scan_file(
     """Return an audit report for a text file."""
     cleaner = Cleaner(policy=policy or CleanerPolicy.default())
     findings: list[Finding] = []
+    limitations: list[str] = []
     file_path = Path(path)
-    source_name = cleaner._sanitize_location_text(file_path.name)
-
+    safe_name = cleaner.clean_text(file_path.name)
+    line_number = 0
     with file_path.open("r", encoding=encoding, errors="replace") as stream:
-        for line_number, line in enumerate(stream, start=1):
-            for finding in cleaner.audit(line).findings:
-                location = format_file_location(
-                    source_name,
-                    line=line_number,
-                    column=finding.start + 1,
-                )
-                findings.append(finding.with_location(location))
-    return AuditReport(tuple(findings))
+        for line in stream:
+            line_number += 1
+            report = cleaner.audit(line)
+            for limitation in report.limitations:
+                if limitation not in limitations:
+                    limitations.append(limitation)
+
+            remaining = cleaner.policy.max_findings - len(findings)
+            if remaining <= 0:
+                if LIMIT_MAX_FINDINGS not in limitations:
+                    limitations.append(LIMIT_MAX_FINDINGS)
+                break
+
+            line_findings = report.findings[:remaining]
+            findings.extend(
+                f.with_location(f"{safe_name}:{line_number}:{f.start + 1}")
+                for f in line_findings
+            )
+            if len(report.findings) > remaining or len(findings) >= cleaner.policy.max_findings:
+                if LIMIT_MAX_FINDINGS not in limitations:
+                    limitations.append(LIMIT_MAX_FINDINGS)
+                break
+
+    return AuditReport(
+        tuple(findings),
+        complete=not limitations,
+        limitations=tuple(limitations),
+    )
 
 
 def clean_file(

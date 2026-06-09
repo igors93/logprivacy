@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
 
 from logprivacy.audit import AuditReport
 from logprivacy.exceptions import LogBlockedError
-from logprivacy.internal.audit_location import (
-    append_mapping_key,
-    append_sequence_index,
-    root_location,
+from logprivacy.internal.replacement import apply_replacements, select_non_overlapping
+from logprivacy.internal.traversal import (
+    LIMIT_ITERATION_ERROR,
+    LIMIT_MAX_DEPTH,
+    LIMIT_REPRESENTATION_ERROR,
+    MAX_DEPTH_PLACEHOLDER,
+    UNAVAILABLE_PLACEHOLDER,
+    TraversalState,
     safe_mapping_key_text,
 )
-from logprivacy.internal.replacement import apply_replacements, select_non_overlapping
-from logprivacy.masking.strategy import PlaceholderMaskingStrategy
 from logprivacy.policy import CleanerPolicy
 from logprivacy.result import Finding, RedactionResult
 from logprivacy.structured.mapping import clean_mapping
@@ -23,28 +26,26 @@ from logprivacy.structured.sequence import clean_sequence
 
 _EXACT_BYTE_TYPES = frozenset({bytes, bytearray, memoryview})
 _EXACT_SCALAR_TYPES = frozenset({int, float, complex, bool})
+_SIMPLE_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _extend_path(parent: str, key: str) -> str:
+    """Return a JSONPath segment for a mapping key, using dot or bracket notation."""
+    if _SIMPLE_KEY.match(key):
+        return f"{parent}.{key}"
+    return f'{parent}["{key}"]'
 
 
 @dataclass(frozen=True, slots=True)
 class Cleaner:
-    """
-    Clean sensitive data from strings and structured values.
-
-    ``Cleaner`` is intentionally small: policies decide what to detect, rules
-    detect findings, and masking strategies decide how findings are replaced.
-
-    Example::
-
-        cleaner = Cleaner(policy=CleanerPolicy.strict())
-        cleaner.clean("client_ip=192.168.1.1 email=john@example.com")
-        # "client_ip=[IP_ADDRESS] email=[EMAIL]"
-    """
+    """Clean sensitive data from strings and structured values."""
 
     policy: CleanerPolicy = field(default_factory=CleanerPolicy.default)
 
     def clean(self, value: Any) -> Any:
-        """Return a cleaned copy of a string, dict, list, or tuple."""
-        return self._clean_value(value, depth=0)
+        """Return a fail-closed cleaned copy of a scalar or structured value."""
+        state = TraversalState(remaining_items=self.policy.max_items)
+        return self._clean_value(value, depth=0, state=state)
 
     def clean_text(self, text: str) -> str:
         """Return a cleaned string."""
@@ -63,161 +64,187 @@ class Cleaner:
         return RedactionResult(original=text, cleaned=cleaned, findings=resolved_findings)
 
     def audit(self, value: Any) -> AuditReport:
+        """Audit a value and fail closed when traversal cannot inspect everything.
+
+        ``report.safe`` is true only when the complete value was inspected within
+        ``max_depth``, ``max_items``, and ``max_findings`` and no sensitive value
+        was found.
         """
-        Return an audit report without modifying the input.
-
-        Structured findings include a safe JSONPath-like location. Text findings
-        use ``$`` as the root location. Nested structures are traversed up to
-        ``policy.max_depth`` and recursive containers are handled safely.
-
-        Example::
-
-            report = audit({"user": {"password": "123"}})
-            report.findings[0].location  # "$.user.password"
-        """
-        findings = self._collect_audit_findings(
-            value,
-            depth=0,
-            location=root_location(),
-            active=set(),
+        state = TraversalState(
+            remaining_items=self.policy.max_items,
+            remaining_findings=self.policy.max_findings,
         )
-        return AuditReport(findings)
+        findings = self._collect_audit_findings(value, depth=0, state=state)
+        return AuditReport(
+            findings,
+            complete=state.complete,
+            limitations=tuple(state.limitations),
+        )
 
     def _collect_audit_findings(
         self,
         value: Any,
         *,
         depth: int,
-        location: str,
-        active: set[int],
+        state: TraversalState,
+        path: str = "$",
     ) -> tuple[Finding, ...]:
-        """Recursively collect located findings without modifying the input."""
+        """Recursively collect findings while respecting global traversal budgets."""
         if depth > self.policy.max_depth:
+            state.mark_limit(LIMIT_MAX_DEPTH)
             return ()
 
         value_type = type(value)
         if isinstance(value, str):
-            return self._locate_findings(select_non_overlapping(self._find(value)), location)
+            return self._bounded_findings(value, state, path=path)
 
-        if isinstance(value, bytes | bytearray | memoryview):
+        if value_type in _EXACT_BYTE_TYPES:
             text = bytes(value).decode("utf-8", errors="replace")
-            return self._locate_findings(select_non_overlapping(self._find(text)), location)
+            return self._bounded_findings(text, state, path=path)
 
         if isinstance(value, Mapping):
-            return self._audit_mapping(value, depth=depth, location=location, active=active)
+            return self._audit_mapping(value, depth=depth, state=state, path=path)
 
         if value_type is range:
             return ()
 
         if isinstance(value, Sequence):
-            return self._audit_sequence(value, depth=depth, location=location, active=active)
+            return self._audit_sequence(value, depth=depth, state=state, path=path)
 
         if value is None or value_type in _EXACT_SCALAR_TYPES:
             return ()
 
-        text = self._safe_unknown_text(value)
-        return self._locate_findings(select_non_overlapping(self._find(text)), location)
+        try:
+            text = str(value)
+        except Exception:
+            state.mark_limit(LIMIT_REPRESENTATION_ERROR)
+            return ()
+        return self._bounded_findings(text, state, path=path)
 
     def _audit_mapping(
         self,
         value: Mapping[Any, Any],
         *,
         depth: int,
-        location: str,
-        active: set[int],
+        state: TraversalState,
+        path: str = "$",
     ) -> tuple[Finding, ...]:
-        """Audit a mapping while preserving safe paths and preventing cycles."""
+        """Audit a mapping without looping forever or trusting arbitrary keys."""
         value_id = id(value)
-        if value_id in active:
+        if value_id in state.active:
             return ()
 
-        active.add(value_id)
+        state.active.add(value_id)
+        findings: list[Finding] = []
         try:
-            findings: list[Finding] = []
-            for key, item in value.items():
-                key_text = safe_mapping_key_text(key)
-                display_key = self._sanitize_location_text(key_text)
-                child_location = append_mapping_key(location, display_key)
+            try:
+                iterator = iter(value.items())
+            except Exception:
+                state.mark_limit(LIMIT_ITERATION_ERROR)
+                return ()
 
-                if self._is_sensitive_key_text(key_text):
+            while True:
+                try:
+                    key, item = next(iterator)
+                except StopIteration:
+                    break
+                except Exception:
+                    state.mark_limit(LIMIT_ITERATION_ERROR)
+                    break
+
+                if not state.consume_item():
+                    break
+
+                key_text, trusted = safe_mapping_key_text(key)
+                safe_key = self.clean_text(key_text) if trusted else key_text
+                child_path = _extend_path(path, safe_key)
+
+                if self.policy.is_sensitive_key(key):
                     matched = self._sensitive_value_marker(item)
                     if matched:
-                        findings.append(
-                            Finding(
-                                rule_name="sensitive_key",
-                                category="credential",
-                                start=0,
-                                end=len(matched),
-                                matched=matched,
-                                reason="value is associated with a policy-sensitive key",
-                                location=child_location,
-                            )
+                        finding = Finding(
+                            rule_name="sensitive_key",
+                            category="credential",
+                            start=0,
+                            end=len(matched),
+                            matched=matched,
+                            reason="value is associated with a policy-sensitive key",
+                            location=child_path,
                         )
+                        findings.extend(state.take_findings((finding,)))
                 else:
                     findings.extend(
                         self._collect_audit_findings(
                             item,
                             depth=depth + 1,
-                            location=child_location,
-                            active=active,
+                            state=state,
+                            path=child_path,
                         )
                     )
             return tuple(findings)
         finally:
-            active.discard(value_id)
+            state.active.discard(value_id)
 
     def _audit_sequence(
         self,
         value: Sequence[Any],
         *,
         depth: int,
-        location: str,
-        active: set[int],
+        state: TraversalState,
+        path: str = "$",
     ) -> tuple[Finding, ...]:
-        """Audit a sequence while preserving indexes and preventing cycles."""
+        """Audit a sequence with cycle, iteration, and item-budget protection."""
         value_id = id(value)
-        if value_id in active:
+        if value_id in state.active:
             return ()
 
-        active.add(value_id)
+        state.active.add(value_id)
+        findings: list[Finding] = []
+        index = 0
         try:
-            findings: list[Finding] = []
-            for index, item in enumerate(value):
+            try:
+                iterator = iter(value)
+            except Exception:
+                state.mark_limit(LIMIT_ITERATION_ERROR)
+                return ()
+
+            while True:
+                try:
+                    item = next(iterator)
+                except StopIteration:
+                    break
+                except Exception:
+                    state.mark_limit(LIMIT_ITERATION_ERROR)
+                    break
+
+                current_index = index
+                index += 1
+
+                if not state.consume_item():
+                    break
                 findings.extend(
                     self._collect_audit_findings(
                         item,
                         depth=depth + 1,
-                        location=append_sequence_index(location, index),
-                        active=active,
+                        state=state,
+                        path=f"{path}[{current_index}]",
                     )
                 )
             return tuple(findings)
         finally:
-            active.discard(value_id)
+            state.active.discard(value_id)
 
-    def _sanitize_location_text(self, text: str) -> str:
-        """Redact sensitive content from a location component without block mode."""
+    def _bounded_findings(
+        self, text: str, state: TraversalState, *, path: str = ""
+    ) -> tuple[Finding, ...]:
         findings = select_non_overlapping(self._find(text))
-        if not findings:
-            return text
-        cleaned, _ = apply_replacements(
-            text,
-            findings,
-            rules=self.policy.rules,
-            masking=PlaceholderMaskingStrategy(),
-        )
-        return cleaned
-
-    def _is_sensitive_key_text(self, key_text: str) -> bool:
-        """Classify a stable key string without invoking an arbitrary key again."""
-        try:
-            return self.policy.is_sensitive_key(key_text)
-        except Exception:
-            return False
+        if path:
+            findings = tuple(f.with_location(path) for f in findings)
+        return state.take_findings(findings)
 
     @staticmethod
     def _sensitive_value_marker(value: Any) -> str:
-        """Return a safe internal marker for a value under a sensitive key."""
+        """Return concrete safe-to-convert values or a non-sensitive type marker."""
         value_type = type(value)
         if value is None:
             return ""
@@ -228,19 +255,6 @@ class Cleaner:
         if value_type in _EXACT_SCALAR_TYPES:
             return repr(value)
         return f"<{value_type.__name__}>"
-
-    @staticmethod
-    def _safe_unknown_text(value: Any) -> str:
-        """Convert an unknown object without propagating representation failures."""
-        try:
-            return str(value)
-        except Exception:
-            return f"<unprintable {type(value).__name__}>"
-
-    @staticmethod
-    def _locate_findings(findings: tuple[Finding, ...], location: str) -> tuple[Finding, ...]:
-        """Attach one safe location to a tuple of rule findings."""
-        return tuple(finding.with_location(location) for finding in findings)
 
     def explain(self, text: str) -> str:
         """Return a human-readable explanation of what would be redacted and why."""
@@ -268,21 +282,36 @@ class Cleaner:
                 f"LogPrivacy blocked sensitive categories: {joined}", categories=blocked
             )
 
-    def _clean_value(self, value: Any, *, depth: int) -> Any:
-        """Recursively clean a value according to the active policy."""
+    def _clean_value(
+        self,
+        value: Any,
+        *,
+        depth: int,
+        state: TraversalState,
+    ) -> Any:
+        """Recursively clean a value without returning uninspected source branches."""
         if depth > self.policy.max_depth:
-            return value
+            state.mark_limit(LIMIT_MAX_DEPTH)
+            return MAX_DEPTH_PLACEHOLDER
 
+        value_type = type(value)
         if isinstance(value, str):
             return self.clean_text(value)
 
         if isinstance(value, Mapping):
-            return clean_mapping(value, self, depth)
+            return clean_mapping(value, self, depth, state)
 
-        if isinstance(value, Sequence) and not isinstance(value, bytes | bytearray):
-            return clean_sequence(value, self, depth)
+        if value_type is range:
+            return value
+
+        if isinstance(value, Sequence) and value_type not in _EXACT_BYTE_TYPES:
+            return clean_sequence(value, self, depth, state)
 
         if self.policy.clean_unknown_objects and value is not None:
-            return self.clean_text(str(value))
+            try:
+                return self.clean_text(str(value))
+            except Exception:
+                state.mark_limit(LIMIT_REPRESENTATION_ERROR)
+                return UNAVAILABLE_PLACEHOLDER
 
         return value

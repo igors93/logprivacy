@@ -8,40 +8,47 @@ from typing import Any
 from logprivacy.result import Finding
 
 _HIGH_RISK = {"credential", "token", "secret", "credit_card"}
-_MAX_DESCRIBED_FINDINGS = 20
 
 
 @dataclass(frozen=True, slots=True, repr=False)
 class AuditReport:
-    """
-    A safe report describing whether a value contains sensitive data.
+    """Describe sensitive findings and whether the audit inspected everything.
 
-    Created by ``audit()`` or ``Cleaner.audit()``. Findings expose safe source
-    locations such as ``$.user.password`` or ``app.log:12:5`` while original
-    matched values remain excluded from normal representations and summaries.
+    ``complete`` is ``False`` when traversal stopped because of configured
+    resource limits or an unsafe container/object failure. An incomplete report
+    is never considered safe, even when no sensitive value was found in the
+    inspected prefix.
     """
 
     findings: tuple[Finding, ...] = field(repr=False)
+    complete: bool = True
+    limitations: tuple[str, ...] = ()
 
     def __repr__(self) -> str:
         """Return a safe representation without nested finding contents."""
         return (
             f"{type(self).__name__}("
             f"safe={self.safe!r}, "
+            f"complete={self.complete!r}, "
             f"risk_level={self.risk_level!r}, "
             f"finding_count={self.finding_count}, "
             f"categories={self.categories!r}, "
-            f"location_count={len(self.locations)})"
+            f"limitations={self.limitations!r})"
         )
 
     @property
     def safe(self) -> bool:
-        """Return ``True`` when no sensitive values were found."""
-        return not self.findings
+        """Return ``True`` only when the complete input was inspected and clean."""
+        return self.complete and not self.findings
+
+    @property
+    def truncated(self) -> bool:
+        """Return whether resource limits or traversal errors made the audit incomplete."""
+        return not self.complete
 
     @property
     def finding_count(self) -> int:
-        """Return the total number of sensitive findings."""
+        """Return the number of retained sensitive findings."""
         return len(self.findings)
 
     @property
@@ -55,74 +62,80 @@ class AuditReport:
 
     @property
     def locations(self) -> tuple[str, ...]:
-        """Return distinct safe source locations in order of first appearance."""
-        seen: list[str] = []
+        """Return finding locations in order of appearance, omitting unlocated findings."""
+        return tuple(f.location for f in self.findings if f.location)
+
+    def details(self) -> list[dict[str, Any]]:
+        """Return safe structured details for each finding, without matched values."""
+        result = []
         for finding in self.findings:
-            if finding.location and finding.location not in seen:
-                seen.append(finding.location)
-        return tuple(seen)
+            d: dict[str, Any] = {
+                "rule_name": finding.rule_name,
+                "category": finding.category,
+                "start": finding.start,
+                "end": finding.end,
+                "reason": finding.reason,
+            }
+            if finding.location:
+                d["location"] = finding.location
+            result.append(d)
+        return result
 
     @property
     def risk_level(self) -> str:
-        """Return ``none``, ``low``, ``medium``, or ``high``."""
-        if not self.findings:
-            return "none"
+        """Return ``none``, ``low``, ``medium``, ``high``, or ``unknown``."""
         if any(finding.category in _HIGH_RISK for finding in self.findings):
             return "high"
+        if not self.complete:
+            return "unknown"
+        if not self.findings:
+            return "none"
         if len(self.findings) >= 3:
             return "medium"
         return "low"
 
     def summary(self) -> dict[str, Any]:
-        """Return aggregate safe data, including distinct finding locations."""
+        """Return a safe structured summary without source values."""
         counts: dict[str, int] = {}
         for finding in self.findings:
             counts[finding.category] = counts.get(finding.category, 0) + 1
         return {
             "safe": self.safe,
+            "complete": self.complete,
+            "truncated": self.truncated,
             "risk_level": self.risk_level,
             "finding_count": self.finding_count,
             "categories": list(self.categories),
-            "counts": counts,
             "locations": list(self.locations),
+            "counts": counts,
+            "limitations": list(self.limitations),
         }
 
-    def details(self) -> list[dict[str, Any]]:
-        """Return per-finding safe details without matches, metadata, or replacements."""
-        return [
-            {
-                "rule_name": finding.rule_name,
-                "category": finding.category,
-                "location": finding.location,
-                "start": finding.start,
-                "end": finding.end,
-                "reason": finding.reason,
-            }
-            for finding in self.findings
-        ]
-
     def describe(self) -> str:
-        """Return a bounded human-readable report with safe locations."""
+        """Return a human-readable report that clearly identifies incomplete audits."""
         if self.safe:
             return "LogPrivacy audit: safe. No sensitive values were found."
 
         lines = [
             "LogPrivacy audit",
             "",
+            f"Complete: {'yes' if self.complete else 'no'}",
             f"Risk level: {self.risk_level}",
             f"Findings: {self.finding_count}",
-            f"Categories: {', '.join(self.categories)}",
+            f"Categories: {', '.join(self.categories) if self.categories else 'none'}",
         ]
-
-        located = [finding for finding in self.findings if finding.location]
-        if located:
-            lines.extend(("", "Locations:"))
-            for index, finding in enumerate(located[:_MAX_DESCRIBED_FINDINGS], start=1):
-                lines.append(
-                    f"{index}. {finding.category} at {finding.location} (rule: {finding.rule_name})"
+        if self.limitations:
+            lines.append(f"Limitations: {', '.join(self.limitations)}")
+        for finding in self.findings:
+            if finding.location:
+                lines.append(f"{finding.category} at {finding.location}")
+            else:
+                lines.append(f"{finding.category}")
+        if not self.complete:
+            lines.extend(
+                (
+                    "",
+                    "The input was not fully inspected and must not be treated as safe.",
                 )
-            remaining = len(located) - _MAX_DESCRIBED_FINDINGS
-            if remaining > 0:
-                lines.append(f"... and {remaining} more finding(s)")
-
+            )
         return "\n".join(lines)

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
+from logprivacy.internal.traversal import safe_mapping_key_text
 from logprivacy.masking.strategy import (
     HashMaskingStrategy,
     MaskingStrategy,
@@ -57,7 +58,9 @@ class CleanerPolicy:
 
     - which rules are active (``rules``)
     - how findings are masked (``masking``)
-    - how structured data is traversed (``max_depth``, ``sensitive_keys``)
+    - how structured data is traversed (``max_depth``, ``max_items``)
+    - how many audit findings are retained (``max_findings``)
+    - which mapping keys are treated as sensitive (``sensitive_keys``)
     - which categories raise an exception instead of being redacted (``block_categories``)
 
     Use the factory class methods to get a sensible starting point, then compose
@@ -75,10 +78,16 @@ class CleanerPolicy:
     block_categories: tuple[str, ...] = ()
     clean_mapping_keys: bool = False
     max_depth: int = 20
+    max_items: int = 10_000
+    max_findings: int = 1_000
     clean_unknown_objects: bool = False
 
     def __post_init__(self) -> None:
-        """Load default rules when no explicit rule set is provided."""
+        """Validate traversal limits and load default rules when required."""
+        _validate_non_negative_integer("max_depth", self.max_depth)
+        _validate_positive_integer("max_items", self.max_items)
+        _validate_positive_integer("max_findings", self.max_findings)
+
         if not self.rules:
             from logprivacy.rule_sets.default import default_rules
 
@@ -159,7 +168,29 @@ class CleanerPolicy:
         )
 
     def is_sensitive_key(self, key: object) -> bool:
-        """Return True when a mapping key should have its value fully redacted."""
-        normalized = str(key).strip().lower().replace("-", "_")
-        sensitive = {item.replace("-", "_") for item in self.sensitive_keys}
+        """Return whether a mapping key requires fail-closed value redaction.
+
+        Exact scalar and byte-like keys are converted without invoking arbitrary
+        user code. Unknown key objects are treated as sensitive because their
+        representation cannot be trusted safely.
+        """
+        key_text, trusted = safe_mapping_key_text(key)
+        if not trusted:
+            return True
+        normalized = key_text.strip().casefold().replace("-", "_")
+        sensitive = {item.casefold().replace("-", "_") for item in self.sensitive_keys}
         return normalized in sensitive
+
+
+def _validate_non_negative_integer(name: str, value: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer")
+    if value < 0:
+        raise ValueError(f"{name} must be greater than or equal to zero")
+
+
+def _validate_positive_integer(name: str, value: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer")
+    if value <= 0:
+        raise ValueError(f"{name} must be greater than zero")
