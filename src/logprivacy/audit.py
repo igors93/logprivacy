@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from logprivacy.result import Finding
@@ -10,13 +10,14 @@ from logprivacy.result import Finding
 _HIGH_RISK = {"credential", "token", "secret", "credit_card"}
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class AuditReport:
     """
     A safe report describing whether a value contains sensitive data.
 
-    Created by ``audit()`` or ``Cleaner.audit()``. Never exposes the original
-    sensitive values — only categories, counts, and a risk level.
+    Created by ``audit()`` or ``Cleaner.audit()``. The nested findings remain
+    available for explicit programmatic inspection, but ``repr()`` and ``str()``
+    expose only aggregate, non-sensitive information.
 
     Example::
 
@@ -27,7 +28,17 @@ class AuditReport:
         report.describe()
     """
 
-    findings: tuple[Finding, ...]
+    findings: tuple[Finding, ...] = field(repr=False)
+
+    def __repr__(self) -> str:
+        """Return a safe representation without nested finding contents."""
+        return (
+            f"{type(self).__name__}("
+            f"safe={self.safe!r}, "
+            f"risk_level={self.risk_level!r}, "
+            f"finding_count={self.finding_count}, "
+            f"categories={self.categories!r})"
+        )
 
     @property
     def safe(self) -> bool:

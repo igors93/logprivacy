@@ -8,24 +8,35 @@ from typing import Any, Generic, TypeVar
 T = TypeVar("T")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class Finding:
     """
     A sensitive value detected in text.
 
-    The original ``matched`` value is stored for inspection. Do not log
-    ``Finding`` objects directly — the ``matched`` field contains the original
-    sensitive text.
+    ``matched`` and ``metadata`` may contain original sensitive content. They
+    remain available for redaction internals and explicit inspection, but are
+    deliberately excluded from ``repr()`` and from ``to_dict()`` by default.
     """
 
     rule_name: str
     category: str
     start: int
     end: int
-    matched: str
+    matched: str = field(repr=False)
     replacement: str = ""
     reason: str = ""
-    metadata: dict[str, str] = field(default_factory=dict)
+    metadata: dict[str, str] = field(default_factory=dict, repr=False)
+
+    def __repr__(self) -> str:
+        """Return a safe representation without matched or derived sensitive values."""
+        return (
+            f"{type(self).__name__}("
+            f"rule_name={self.rule_name!r}, "
+            f"category={self.category!r}, "
+            f"start={self.start}, "
+            f"end={self.end}, "
+            f"has_replacement={bool(self.replacement)!r})"
+        )
 
     @property
     def length(self) -> int:
@@ -45,8 +56,19 @@ class Finding:
             metadata=dict(self.metadata),
         )
 
-    def to_dict(self, *, include_match: bool = False) -> dict[str, Any]:
-        """Return a JSON-friendly representation."""
+    def to_dict(
+        self,
+        *,
+        include_match: bool = False,
+        include_metadata: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Return a JSON-friendly representation.
+
+        Sensitive source text and rule metadata are excluded by default. Use
+        ``include_match=True`` or ``include_metadata=True`` only in a trusted
+        context that is not written to logs, telemetry, or user-visible output.
+        """
         data: dict[str, Any] = {
             "rule_name": self.rule_name,
             "category": self.category,
@@ -54,25 +76,36 @@ class Finding:
             "end": self.end,
             "replacement": self.replacement,
             "reason": self.reason,
-            "metadata": dict(self.metadata),
         }
         if include_match:
             data["matched"] = self.matched
+        if include_metadata:
+            data["metadata"] = dict(self.metadata)
         return data
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class RedactionResult(Generic[T]):
     """
     The result of a cleaning operation, pairing the cleaned value with finding metadata.
 
-    ``original`` and ``cleaned`` differ only when at least one finding was redacted.
-    Use ``explain()`` to get a human-readable breakdown of what changed.
+    ``original`` and the nested findings can contain sensitive values. The
+    representation therefore contains only aggregate, non-sensitive state.
+    Use ``summary()`` or ``explain()`` for safe diagnostic output.
     """
 
-    original: T
-    cleaned: T
-    findings: tuple[Finding, ...] = ()
+    original: T = field(repr=False)
+    cleaned: T = field(repr=False)
+    findings: tuple[Finding, ...] = field(default=(), repr=False)
+
+    def __repr__(self) -> str:
+        """Return a safe representation without original or cleaned payloads."""
+        return (
+            f"{type(self).__name__}("
+            f"changed={self.changed!r}, "
+            f"finding_count={self.finding_count}, "
+            f"categories={self.categories!r})"
+        )
 
     @property
     def changed(self) -> bool:
