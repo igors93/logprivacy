@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import logging
 import traceback
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any
 
 from logprivacy.cleaner import Cleaner
 from logprivacy.exceptions import LogBlockedError
+from logprivacy.internal.logging_values import LoggingValueSanitizer
+from logprivacy.internal.rendering import (
+    DEFAULT_MAX_RENDER_CHARS,
+    safe_render,
+    sanitize_output_text,
+)
 from logprivacy.masking.value import mask_sensitive_value
 
 
@@ -28,75 +33,105 @@ def _build_standard_record_attributes() -> frozenset[str]:
 
 
 _STANDARD_RECORD_ATTRIBUTES = _build_standard_record_attributes()
-_PRIMITIVE_TYPES = (int, float, complex, bool, type(None))
 
 
-def _sanitize_value(value: Any, cleaner: Cleaner) -> Any:
-    """Return a logging-safe copy, including values unsupported by ``Cleaner.clean``."""
-    if isinstance(value, str):
-        return cleaner.clean_text(value)
+def _sanitize_value(value: object, cleaner: Cleaner) -> object:
+    """Return one bounded logging-safe value using the hardened sanitizer."""
+    return LoggingValueSanitizer(cleaner).sanitize(value)
 
-    if isinstance(value, bytes | bytearray):
-        decoded = bytes(value).decode("utf-8", errors="replace")
-        return cleaner.clean_text(decoded)
 
-    if isinstance(value, Mapping):
-        cleaned_mapping: dict[Any, Any] = {}
-        for key, item in value.items():
-            if cleaner.policy.is_sensitive_key(key):
-                cleaned_mapping[key] = mask_sensitive_value(
-                    item,
-                    category="credential",
-                    rule_name="logging_extra",
-                    reason="value belongs to a sensitive logging mapping key",
-                    policy=cleaner.policy,
-                )
-            else:
-                cleaned_mapping[key] = _sanitize_value(item, cleaner)
-        return cleaned_mapping
+def _sanitize_message(record: logging.LogRecord, sanitizer: LoggingValueSanitizer) -> None:
+    """Render and clean a message without exposing failing or truncated arguments."""
+    original_message = record.msg
+    if type(original_message) is str:
+        record.msg = original_message
+    else:
+        try:
+            message_template = str(original_message)
+        except Exception:
+            message_template = f"<unprintable {type(original_message).__name__}>"
+        record.msg = sanitize_output_text(
+            message_template,
+            allow_newline=True,
+            allow_tab=True,
+            max_chars=DEFAULT_MAX_RENDER_CHARS,
+        )
 
-    if isinstance(value, tuple):
-        return tuple(_sanitize_value(item, cleaner) for item in value)
+    try:
+        record.args = sanitizer.sanitize_args(record.args)
+        rendered = record.getMessage()
+    except LogBlockedError:
+        raise
+    except Exception:
+        rendered = safe_render(
+            original_message,
+            sanitizer.cleaner,
+            max_items=sanitizer.cleaner.policy.max_items,
+            max_chars=DEFAULT_MAX_RENDER_CHARS,
+        )
 
-    if isinstance(value, Sequence):
-        return [_sanitize_value(item, cleaner) for item in value]
-
-    if isinstance(value, _PRIMITIVE_TYPES):
-        return value
-
-    # Logging will eventually call str() or repr() for arbitrary objects. Convert
-    # them here and clean the result before a formatter can expose the raw value.
-    return cleaner.clean_text(str(value))
+    cleaned = sanitizer.cleaner.clean_text(rendered)
+    record.msg = sanitize_output_text(
+        cleaned,
+        allow_newline=True,
+        allow_tab=True,
+        max_chars=DEFAULT_MAX_RENDER_CHARS,
+    )
+    # Formatters must never interpolate the original values a second time.
+    record.args = ()
 
 
 def _sanitize_exception(record: logging.LogRecord, cleaner: Cleaner) -> None:
     """Render, clean, and cache exception text before any formatter sees it."""
     if record.exc_info:
-        rendered = "".join(traceback.format_exception(*record.exc_info)).rstrip()
-        record.exc_text = cleaner.clean_text(rendered)
-        # Prevent a formatter from rebuilding the traceback from the original
-        # exception object after we have already produced a safe version.
-        record.exc_info = None
+        try:
+            rendered = "".join(traceback.format_exception(*record.exc_info)).rstrip()
+        except Exception:
+            rendered = "[UNAVAILABLE]"
+        finally:
+            # Prevent a formatter from rebuilding the traceback from the original
+            # exception object after a safe value has been produced.
+            record.exc_info = None
+
+        cleaned = cleaner.clean_text(rendered)
+        record.exc_text = sanitize_output_text(
+            cleaned,
+            allow_newline=True,
+            allow_tab=True,
+            max_chars=DEFAULT_MAX_RENDER_CHARS,
+        )
     elif record.exc_text:
-        record.exc_text = cleaner.clean_text(str(record.exc_text))
+        rendered = safe_render(
+            record.exc_text,
+            cleaner,
+            max_items=cleaner.policy.max_items,
+            max_chars=DEFAULT_MAX_RENDER_CHARS,
+        )
+        cleaned = cleaner.clean_text(rendered)
+        record.exc_text = sanitize_output_text(
+            cleaned,
+            allow_newline=True,
+            allow_tab=True,
+            max_chars=DEFAULT_MAX_RENDER_CHARS,
+        )
 
 
-def _sanitize_extra_attributes(record: logging.LogRecord, cleaner: Cleaner) -> None:
+def _sanitize_extra_attributes(record: logging.LogRecord, sanitizer: LoggingValueSanitizer) -> None:
     """Clean user-provided ``extra`` fields in place."""
     for key in tuple(record.__dict__):
         if key in _STANDARD_RECORD_ATTRIBUTES:
             continue
 
-        if cleaner.policy.is_sensitive_key(key):
+        if sanitizer.cleaner.policy.is_sensitive_key(key):
             record.__dict__[key] = mask_sensitive_value(
                 record.__dict__[key],
                 category="credential",
                 rule_name="logging_extra",
                 reason="value belongs to a sensitive LogRecord attribute",
-                policy=cleaner.policy,
+                policy=sanitizer.cleaner.policy,
             )
         else:
-            record.__dict__[key] = _sanitize_value(record.__dict__[key], cleaner)
+            record.__dict__[key] = sanitizer.sanitize(record.__dict__[key])
 
 
 def _matches_logger_namespace(record_name: str, logger_prefix: str | None) -> bool:
@@ -128,18 +163,26 @@ class LogPrivacyFilter(logging.Filter):
             return True
 
         try:
-            record.args = _sanitize_value(record.args, self.cleaner)
-            record.msg = self.cleaner.clean_text(record.getMessage())
-            # Clear args so formatters cannot interpolate an original value a
-            # second time. The rendered and cleaned message is now authoritative.
-            record.args = ()
-
+            sanitizer = LoggingValueSanitizer(self.cleaner)
+            _sanitize_message(record, sanitizer)
             _sanitize_exception(record, self.cleaner)
 
             if record.stack_info:
-                record.stack_info = self.cleaner.clean_text(str(record.stack_info))
+                rendered_stack = safe_render(
+                    record.stack_info,
+                    self.cleaner,
+                    max_items=self.cleaner.policy.max_items,
+                    max_chars=DEFAULT_MAX_RENDER_CHARS,
+                )
+                cleaned_stack = self.cleaner.clean_text(rendered_stack)
+                record.stack_info = sanitize_output_text(
+                    cleaned_stack,
+                    allow_newline=True,
+                    allow_tab=True,
+                    max_chars=DEFAULT_MAX_RENDER_CHARS,
+                )
 
-            _sanitize_extra_attributes(record, self.cleaner)
+            _sanitize_extra_attributes(record, sanitizer)
         except LogBlockedError:
             if self.drop_blocked:
                 return False
