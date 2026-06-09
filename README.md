@@ -225,9 +225,9 @@ Or individually:
 
 ```bash
 python3 -m ruff format .
-python3 -m ruff check .
+python3 -m ruff check . --fix
 python3 -m mypy src
-python3 -m pytest
+python3 -m pytest -vv
 python3 -m build
 ```
 
