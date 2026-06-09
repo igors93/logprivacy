@@ -10,6 +10,7 @@ from typing import Any
 
 from logprivacy.cleaner import Cleaner
 from logprivacy.exceptions import LogBlockedError
+from logprivacy.masking.value import mask_sensitive_value
 
 
 def _build_standard_record_attributes() -> frozenset[str]:
@@ -30,15 +31,6 @@ _STANDARD_RECORD_ATTRIBUTES = _build_standard_record_attributes()
 _PRIMITIVE_TYPES = (int, float, complex, bool, type(None))
 
 
-def _raise_if_credential_is_blocked(cleaner: Cleaner) -> None:
-    """Honor production block mode for sensitive structured keys."""
-    if "credential" in cleaner.policy.block_categories:
-        raise LogBlockedError(
-            "LogPrivacy blocked sensitive categories: credential",
-            categories=("credential",),
-        )
-
-
 def _sanitize_value(value: Any, cleaner: Cleaner) -> Any:
     """Return a logging-safe copy, including values unsupported by ``Cleaner.clean``."""
     if isinstance(value, str):
@@ -52,8 +44,13 @@ def _sanitize_value(value: Any, cleaner: Cleaner) -> Any:
         cleaned_mapping: dict[Any, Any] = {}
         for key, item in value.items():
             if cleaner.policy.is_sensitive_key(key):
-                _raise_if_credential_is_blocked(cleaner)
-                cleaned_mapping[key] = cleaner.policy.masking.mask_category("secret")
+                cleaned_mapping[key] = mask_sensitive_value(
+                    item,
+                    category="credential",
+                    rule_name="logging_extra",
+                    reason="value belongs to a sensitive logging mapping key",
+                    policy=cleaner.policy,
+                )
             else:
                 cleaned_mapping[key] = _sanitize_value(item, cleaner)
         return cleaned_mapping
@@ -91,8 +88,13 @@ def _sanitize_extra_attributes(record: logging.LogRecord, cleaner: Cleaner) -> N
             continue
 
         if cleaner.policy.is_sensitive_key(key):
-            _raise_if_credential_is_blocked(cleaner)
-            record.__dict__[key] = cleaner.policy.masking.mask_category("secret")
+            record.__dict__[key] = mask_sensitive_value(
+                record.__dict__[key],
+                category="credential",
+                rule_name="logging_extra",
+                reason="value belongs to a sensitive LogRecord attribute",
+                policy=cleaner.policy,
+            )
         else:
             record.__dict__[key] = _sanitize_value(record.__dict__[key], cleaner)
 

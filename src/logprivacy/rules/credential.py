@@ -5,12 +5,10 @@ from __future__ import annotations
 import re
 
 from logprivacy.masking.strategy import MaskingStrategy
+from logprivacy.masking.value import mask_concrete_value
 from logprivacy.result import Finding
 from logprivacy.rules.base import RedactionRule
 
-# Authorization values need dedicated handling.  The generic credential pattern
-# stops at whitespace, so a value such as ``Bearer actual-token`` would otherwise
-# redact only the word ``Bearer`` and leave the credential in the output.
 _AUTHORIZATION_PATTERN = re.compile(
     r"(?P<key>\b(?:authorization|proxy[-_]?authorization)\b)"
     r"(?P<sep>\s*[:=]\s*)"
@@ -51,10 +49,6 @@ class CredentialRule(RedactionRule):
         findings: list[Finding] = []
         authorization_ranges: list[tuple[int, int]] = []
 
-        # Detect complete Bearer and Basic authorization values before the
-        # generic key/value rule.  Both matches start at the same key, but this
-        # finding spans the real credential as well and therefore cannot leave
-        # a token behind during overlap resolution.
         for match in _AUTHORIZATION_PATTERN.finditer(text):
             scheme = match.group("scheme")
             category = "token" if scheme.casefold() == "bearer" else "credential"
@@ -80,9 +74,6 @@ class CredentialRule(RedactionRule):
             authorization_ranges.append((match.start(), match.end()))
 
         for match in _CREDENTIAL_PATTERN.finditer(text):
-            # The authorization-specific match is complete and more precise.
-            # Avoid returning a second, shorter finding such as
-            # ``Authorization: Bearer`` for the same assignment.
             if _ranges_overlap(match.start(), match.end(), authorization_ranges):
                 continue
 
@@ -98,33 +89,30 @@ class CredentialRule(RedactionRule):
                         "key": match.group("key"),
                         "sep": match.group("sep"),
                         "quote": match.group("quote"),
+                        "value": match.group("value"),
                     },
                 )
             )
         return tuple(findings)
 
     def replacement_for(self, finding: Finding, masking: MaskingStrategy) -> str:
-        """Keep the credential key visible and redact only the value."""
+        """Keep the credential key visible and redact only the concrete value."""
         key = finding.metadata.get("key", "secret")
         sep = finding.metadata.get("sep", "=")
         quote = finding.metadata.get("quote", "")
+        value = finding.metadata.get("value", "")
+
+        replacement = mask_concrete_value(
+            value,
+            category=finding.category,
+            rule_name=finding.rule_name,
+            reason=finding.reason,
+            masking=masking,
+        )
 
         if finding.metadata.get("kind") == "authorization":
             scheme = finding.metadata.get("scheme", "")
             scheme_sep = finding.metadata.get("scheme_sep", " ")
-            value = finding.metadata.get("value", "")
-
-            # Mask only the actual credential so partial and hash strategies
-            # remain meaningful and never hash or expose the header prefix.
-            value_finding = Finding(
-                rule_name=finding.rule_name,
-                category=finding.category,
-                start=0,
-                end=len(value),
-                matched=value,
-                reason=finding.reason,
-            )
-            replacement = masking.mask(value_finding)
             return f"{key}{sep}{quote}{scheme}{scheme_sep}{replacement}{quote}"
 
-        return f"{key}{sep}{quote}{masking.mask_category('secret')}{quote}"
+        return f"{key}{sep}{quote}{replacement}{quote}"

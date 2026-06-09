@@ -9,6 +9,7 @@ from unicodedata import category as unicode_category
 
 from logprivacy.cleaner import Cleaner
 from logprivacy.exceptions import LogBlockedError
+from logprivacy.masking.value import mask_sensitive_value
 
 DEFAULT_MAX_RENDER_ITEMS = 100
 DEFAULT_MAX_RENDER_CHARS = 16_384
@@ -206,11 +207,14 @@ class _SafeRenderer:
                 value_budget = max(0, available - len(safe_key) - 2)
 
                 if sensitive:
-                    _raise_if_credential_is_blocked(self.cleaner)
-                    rendered_item = _fit_text(
-                        repr(self.cleaner.policy.masking.mask_category("secret")),
-                        value_budget,
+                    replacement = mask_sensitive_value(
+                        item,
+                        category="credential",
+                        rule_name="safe_render",
+                        reason="value belongs to a sensitive mapping key",
+                        policy=self.cleaner.policy,
                     )
+                    rendered_item = _fit_text(repr(replacement), value_budget)
                 else:
                     rendered_item = self.render(
                         item,
@@ -515,12 +519,3 @@ def _validate_positive_limit(name: str, value: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"{name} must be a positive integer")
     return value
-
-
-def _raise_if_credential_is_blocked(cleaner: Cleaner) -> None:
-    """Honor production block mode for sensitive structured keys."""
-    if "credential" in cleaner.policy.block_categories:
-        raise LogBlockedError(
-            "LogPrivacy blocked sensitive categories: credential",
-            categories=("credential",),
-        )

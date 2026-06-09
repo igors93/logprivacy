@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from logprivacy.masking.strategy import MaskingStrategy
+from logprivacy.masking.value import mask_concrete_value
 from logprivacy.result import Finding
 from logprivacy.rules.base import RedactionRule
 
@@ -34,7 +35,10 @@ class TokenRule(RedactionRule):
                     end=match.end(),
                     matched=match.group(0),
                     reason="text matched a bearer token",
-                    metadata={"prefix": match.group("prefix")},
+                    metadata={
+                        "prefix": match.group("prefix"),
+                        "value": match.group("value"),
+                    },
                 )
             )
         for match in _JWT_PATTERN.finditer(text):
@@ -51,6 +55,21 @@ class TokenRule(RedactionRule):
         return tuple(findings)
 
     def replacement_for(self, finding: Finding, masking: MaskingStrategy) -> str:
-        """Keep the Bearer prefix when it was present."""
+        """Keep the Bearer prefix and mask the concrete token value."""
         prefix = finding.metadata.get("prefix", "")
-        return f"{prefix}{masking.mask_category('token')}"
+        value = finding.metadata.get("value")
+        if value is None:
+            value = (
+                finding.matched[len(prefix) :]
+                if prefix and finding.matched.startswith(prefix)
+                else finding.matched
+            )
+
+        replacement = mask_concrete_value(
+            value,
+            category=finding.category,
+            rule_name=finding.rule_name,
+            reason=finding.reason,
+            masking=masking,
+        )
+        return f"{prefix}{replacement}"
