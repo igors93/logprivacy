@@ -10,6 +10,7 @@ from logprivacy.audit import AuditReport
 from logprivacy.cleaner import Cleaner
 from logprivacy.exceptions import LogPrivacyAssertionError
 from logprivacy.integrations.logging_filter import LogPrivacyFilter, install_handler_filters
+from logprivacy.internal.rendering import safe_render
 from logprivacy.policy import CleanerPolicy
 from logprivacy.result import RedactionResult
 
@@ -131,8 +132,10 @@ def safe_print(
         # token=[SECRET] {'password': '[SECRET]'}
     """
     cleaner = _DEFAULT_CLEANER if policy is None else Cleaner(policy=policy)
-    rendered = sep.join(str(cleaner.clean(value)) for value in values)
-    print(rendered, end=end)
+    safe_separator = cleaner.clean_text(sep)
+    safe_end = cleaner.clean_text(end)
+    rendered = safe_separator.join(safe_render(value, cleaner) for value in values)
+    print(rendered, end=safe_end)
 
 
 def get_safe_logger(
