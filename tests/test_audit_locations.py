@@ -72,7 +72,6 @@ def test_finding_location_survives_replacement() -> None:
         category="email",
         start=0,
         end=16,
-        matched="john@example.com",
         location="$.user.email",
     )
 

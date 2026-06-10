@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import re
 
+from logprivacy.internal.matches import _DetectedMatch
 from logprivacy.masking.strategy import MaskingStrategy
 from logprivacy.masking.value import mask_concrete_value
-from logprivacy.result import Finding
 from logprivacy.rules.base import RedactionRule
 
 _AUTHORIZATION_PATTERN = re.compile(
@@ -44,16 +44,16 @@ class CredentialRule(RedactionRule):
     name = "credential"
     category = "credential"
 
-    def find(self, text: str) -> tuple[Finding, ...]:
-        """Return credential assignments as findings."""
-        findings: list[Finding] = []
+    def find(self, text: str) -> tuple[_DetectedMatch, ...]:
+        """Return credential assignments as internal matches."""
+        matches: list[_DetectedMatch] = []
         authorization_ranges: list[tuple[int, int]] = []
 
         for match in _AUTHORIZATION_PATTERN.finditer(text):
             scheme = match.group("scheme")
             category = "token" if scheme.casefold() == "bearer" else "credential"
-            findings.append(
-                Finding(
+            matches.append(
+                _DetectedMatch(
                     rule_name=self.name,
                     category=category,
                     start=match.start(),
@@ -77,8 +77,8 @@ class CredentialRule(RedactionRule):
             if _ranges_overlap(match.start(), match.end(), authorization_ranges):
                 continue
 
-            findings.append(
-                Finding(
+            matches.append(
+                _DetectedMatch(
                     rule_name=self.name,
                     category=self.category,
                     start=match.start(),
@@ -93,26 +93,26 @@ class CredentialRule(RedactionRule):
                     },
                 )
             )
-        return tuple(findings)
+        return tuple(matches)
 
-    def replacement_for(self, finding: Finding, masking: MaskingStrategy) -> str:
+    def replacement_for(self, match: _DetectedMatch, masking: MaskingStrategy) -> str:
         """Keep the credential key visible and redact only the concrete value."""
-        key = finding.metadata.get("key", "secret")
-        sep = finding.metadata.get("sep", "=")
-        quote = finding.metadata.get("quote", "")
-        value = finding.metadata.get("value", "")
+        key = match.metadata.get("key", "secret")
+        sep = match.metadata.get("sep", "=")
+        quote = match.metadata.get("quote", "")
+        value = match.metadata.get("value", "")
 
         replacement = mask_concrete_value(
             value,
-            category=finding.category,
-            rule_name=finding.rule_name,
-            reason=finding.reason,
+            category=match.category,
+            rule_name=match.rule_name,
+            reason=match.reason,
             masking=masking,
         )
 
-        if finding.metadata.get("kind") == "authorization":
-            scheme = finding.metadata.get("scheme", "")
-            scheme_sep = finding.metadata.get("scheme_sep", " ")
+        if match.metadata.get("kind") == "authorization":
+            scheme = match.metadata.get("scheme", "")
+            scheme_sep = match.metadata.get("scheme_sep", " ")
             return f"{key}{sep}{quote}{scheme}{scheme_sep}{replacement}{quote}"
 
         return f"{key}{sep}{quote}{replacement}{quote}"

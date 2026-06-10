@@ -5,11 +5,13 @@ from __future__ import annotations
 import hmac
 from dataclasses import dataclass, field
 from hashlib import sha256
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from logprivacy.masking.masks import keep_edges, mask_email, mask_token
 from logprivacy.masking.placeholders import DEFAULT_PLACEHOLDERS
-from logprivacy.result import Finding
+
+if TYPE_CHECKING:
+    from logprivacy.result import Finding
 
 _HASH_DOMAIN = b"logprivacy.hash.v1"
 _MIN_HASH_LENGTH = 12
@@ -21,10 +23,20 @@ class MaskingStrategy(Protocol):
     """Protocol implemented by objects that know how to mask findings."""
 
     def mask(self, finding: Finding) -> str:
-        """Return the replacement text for a finding."""
+        """Return the replacement text for a Finding (legacy path).
+
+        Called by the internal redaction pipeline when a Finding is available.
+        New code should prefer ``mask_value``.
+        """
+
+    def mask_value(self, value: str, category: str) -> str:
+        """Return the replacement text for a raw matched value and its category.
+
+        This is the primary masking entry point used by the redaction pipeline.
+        """
 
     def mask_category(self, category: str) -> str:
-        """Return the replacement text for a category."""
+        """Return the replacement text for a category when no concrete value exists."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +49,10 @@ class PlaceholderMaskingStrategy:
     def mask(self, finding: Finding) -> str:
         """Return a placeholder for the finding category."""
         return self.mask_category(finding.category)
+
+    def mask_value(self, value: str, category: str) -> str:
+        """Return a placeholder for the category (value is ignored)."""
+        return self.mask_category(category)
 
     def mask_category(self, category: str) -> str:
         """Return a placeholder for a category."""
@@ -51,13 +67,19 @@ class PartialMaskingStrategy:
 
     def mask(self, finding: Finding) -> str:
         """Return a partially masked value."""
-        if finding.category == "email":
-            return mask_email(finding.matched)
-        if finding.category in {"token", "secret", "credential"}:
-            return mask_token(finding.matched)
-        if finding.category == "url":
+        if not finding.matched:
+            return self.mask_category(finding.category)
+        return self.mask_value(finding.matched, finding.category)
+
+    def mask_value(self, value: str, category: str) -> str:
+        """Return a partially masked representation of value."""
+        if category == "email":
+            return mask_email(value)
+        if category in {"token", "secret", "credential"}:
+            return mask_token(value)
+        if category == "url":
             return "[URL]"
-        return keep_edges(finding.matched)
+        return keep_edges(value)
 
     def mask_category(self, category: str) -> str:
         """Return a safe category placeholder when no concrete value exists."""
@@ -102,13 +124,17 @@ class HashMaskingStrategy:
 
     def mask(self, finding: Finding) -> str:
         """Return a category-prefixed deterministic correlation token."""
-        payload = _build_hash_payload(finding.category, finding.matched, salt=self.salt)
+        return self.mask_value(finding.matched, finding.category)
+
+    def mask_value(self, value: str, category: str) -> str:
+        """Return a category-prefixed deterministic correlation token."""
+        payload = _build_hash_payload(category, value, salt=self.salt)
         if self.key is None:
             digest = sha256(payload).hexdigest()
         else:
             digest = hmac.new(_coerce_key(self.key), payload, sha256).hexdigest()
 
-        label = self.placeholders.get(finding.category, "[REDACTED]").strip("[]")
+        label = self.placeholders.get(category, "[REDACTED]").strip("[]")
         return f"[{label}:{digest[: self.length]}]"
 
     def mask_category(self, category: str) -> str:

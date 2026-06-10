@@ -11,25 +11,34 @@ T = TypeVar("T")
 @dataclass(frozen=True, slots=True, repr=False)
 class Finding:
     """
-    A sensitive value detected in text.
+    A sensitive value detected in text, safe for public consumption.
 
-    ``matched`` and ``metadata`` may contain original sensitive content. They
-    remain available for redaction internals and explicit inspection, but are
-    deliberately excluded from ``repr()`` and from ``to_dict()`` by default.
+    The original matched text is **not** retained by default — only the
+    replacement, position, rule name, category, and reason are stored.
+
+    If you need the matched value for a trusted internal context (e.g. debug
+    tooling not written to logs), construct the Finding with
+    ``retain_sensitive_match=True``, which stores it in the private
+    ``_matched`` slot.  This option should never be enabled in production paths.
+
+    Attributes exposed in repr, to_dict, and serialisation are safe: they
+    contain no source-text fragments.
     """
 
     rule_name: str
     category: str
     start: int
     end: int
-    matched: str = field(repr=False)
     replacement: str = ""
     reason: str = ""
     metadata: dict[str, str] = field(default_factory=dict, repr=False)
     location: str = ""
+    # Private: populated only when retain_sensitive_match=True was requested.
+    # Not included in repr, to_dict, or any public output.
+    _matched: str = field(default="", repr=False, compare=False, hash=False)
 
     def __repr__(self) -> str:
-        """Return a safe representation without matched or derived sensitive values."""
+        """Return a safe representation without matched text or derived sensitive values."""
         location = f", location={self.location!r}" if self.location else ""
         return (
             f"{type(self).__name__}("
@@ -40,6 +49,17 @@ class Finding:
             f"has_replacement={bool(self.replacement)!r}"
             f"{location})"
         )
+
+    @property
+    def matched(self) -> str:
+        """Return the retained sensitive match text, or empty string if not retained.
+
+        This property is provided for backward compatibility and for trusted
+        tooling.  In the default pipeline, ``_matched`` is always empty — the
+        sensitive text is discarded after redaction.  It is only non-empty when
+        the pipeline was run with ``retain_sensitive_matches=True``.
+        """
+        return self._matched
 
     @property
     def length(self) -> int:
@@ -53,11 +73,11 @@ class Finding:
             category=self.category,
             start=self.start,
             end=self.end,
-            matched=self.matched,
             replacement=replacement,
             reason=self.reason,
             metadata=dict(self.metadata),
             location=self.location,
+            _matched=self._matched,
         )
 
     def with_location(self, location: str) -> Finding:
@@ -67,11 +87,11 @@ class Finding:
             category=self.category,
             start=self.start,
             end=self.end,
-            matched=self.matched,
             replacement=self.replacement,
             reason=self.reason,
             metadata=dict(self.metadata),
             location=location,
+            _matched=self._matched,
         )
 
     def to_dict(
@@ -83,9 +103,11 @@ class Finding:
         """
         Return a JSON-friendly representation.
 
-        Sensitive source text and rule metadata are excluded by default. Use
-        ``include_match=True`` or ``include_metadata=True`` only in a trusted
-        context that is not written to logs, telemetry, or user-visible output.
+        Sensitive source text and rule metadata are excluded by default.
+        ``include_match=True`` exposes the privately retained matched value
+        only if it was stored (i.e. the pipeline was run with
+        ``retain_sensitive_matches=True``).  Use only in a trusted context that
+        is not written to logs, telemetry, or user-visible output.
         """
         data: dict[str, Any] = {
             "rule_name": self.rule_name,
@@ -98,7 +120,7 @@ class Finding:
         if self.location:
             data["location"] = self.location
         if include_match:
-            data["matched"] = self.matched
+            data["matched"] = self._matched
         if include_metadata:
             data["metadata"] = dict(self.metadata)
         return data
@@ -109,8 +131,8 @@ class RedactionResult(Generic[T]):
     """
     The result of a cleaning operation, pairing the cleaned value with finding metadata.
 
-    ``original`` and the nested findings can contain sensitive values. The
-    representation therefore contains only aggregate, non-sensitive state.
+    ``original`` may contain sensitive values. The representation therefore
+    contains only aggregate, non-sensitive state.
     Use ``summary()`` or ``explain()`` for safe diagnostic output.
     """
 

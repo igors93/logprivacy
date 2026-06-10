@@ -7,7 +7,6 @@ from typing import cast
 from logprivacy.exceptions import LogBlockedError
 from logprivacy.masking.strategy import MaskingStrategy
 from logprivacy.policy import CleanerPolicy
-from logprivacy.result import Finding
 
 _EXACT_SCALAR_TYPES = frozenset({int, float, complex, bool})
 _EXACT_BYTE_TYPES = frozenset({bytes, bytearray, memoryview})
@@ -29,16 +28,7 @@ def mask_concrete_value(
     concrete = _safe_concrete_text(value)
     if not concrete:
         return masking.mask_category(category)
-
-    finding = Finding(
-        rule_name=rule_name,
-        category=category,
-        start=0,
-        end=len(concrete),
-        matched=concrete,
-        reason=reason,
-    )
-    return masking.mask(finding)
+    return masking.mask_value(concrete, category)
 
 
 def mask_sensitive_value(

@@ -9,7 +9,7 @@ def _sensitive_finding() -> Finding:
         category="token",
         start=0,
         end=len(secret),
-        matched=secret,
+        _matched=secret,
         replacement="[TOKEN]",
         reason="authorization header contains a sensitive credential",
         metadata={"scheme": "Bearer", "value": secret},

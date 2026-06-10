@@ -6,8 +6,8 @@ import re
 from dataclasses import dataclass, field
 from re import Pattern
 
+from logprivacy.internal.matches import _DetectedMatch
 from logprivacy.masking.strategy import MaskingStrategy
-from logprivacy.result import Finding
 
 
 class RedactionRule:
@@ -16,13 +16,13 @@ class RedactionRule:
     name: str
     category: str
 
-    def find(self, text: str) -> tuple[Finding, ...]:
-        """Return all findings detected in text."""
+    def find(self, text: str) -> tuple[_DetectedMatch, ...]:
+        """Return all matches detected in text as internal DetectedMatch objects."""
         raise NotImplementedError
 
-    def replacement_for(self, finding: Finding, masking: MaskingStrategy) -> str:
-        """Return replacement text for a finding."""
-        return masking.mask(finding)
+    def replacement_for(self, match: _DetectedMatch, masking: MaskingStrategy) -> str:
+        """Return replacement text for a detected match."""
+        return masking.mask_value(match.matched, match.category)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,10 +47,10 @@ class RegexRedactionRule(RedactionRule):
         """Create a regex rule from a pattern string."""
         return cls(name=name, category=category, pattern=re.compile(pattern, flags), reason=reason)
 
-    def find(self, text: str) -> tuple[Finding, ...]:
-        """Return regex matches as findings."""
+    def find(self, text: str) -> tuple[_DetectedMatch, ...]:
+        """Return regex matches as internal DetectedMatch objects."""
         return tuple(
-            Finding(
+            _DetectedMatch(
                 rule_name=self.name,
                 category=self.category,
                 start=match.start(),
@@ -60,3 +60,7 @@ class RegexRedactionRule(RedactionRule):
             )
             for match in self.pattern.finditer(text)
         )
+
+    def replacement_for(self, match: _DetectedMatch, masking: MaskingStrategy) -> str:
+        """Return replacement via the masking strategy."""
+        return masking.mask_value(match.matched, match.category)

@@ -36,6 +36,36 @@ _DEFAULT_SENSITIVE_KEYS = (
 )
 
 
+# Sentinel that distinguishes "caller passed no rules" (load defaults) from
+# "caller explicitly passed an empty tuple" (use no rules).
+class _UseDefaultRules:
+    pass
+
+
+_USE_DEFAULT_RULES: tuple[RedactionRule, ...] = ()  # sentinel instance marker
+
+# We abuse the type system slightly here: the public field type is
+# tuple[RedactionRule, ...] but the default factory returns _USE_DEFAULT_RULES
+# which we detect before validation. After __post_init__ the field always
+# contains a real tuple[RedactionRule, ...].
+_SENTINEL: object = object()
+
+
+def _default_rules_sentinel() -> tuple[RedactionRule, ...]:
+    """Factory that returns the internal sentinel for 'use defaults'."""
+    # We need a unique object we can detect in __post_init__.  We return an
+    # empty tuple subclass whose identity we check, so the public type remains
+    # tuple[RedactionRule, ...].
+    return _RULES_NOT_PROVIDED
+
+
+class _RulesNotProvided(tuple):  # type: ignore[type-arg]
+    """Singleton sentinel: rules field was not specified by the caller."""
+
+
+_RULES_NOT_PROVIDED = _RulesNotProvided()
+
+
 def resolve_masking(masking: MaskingStrategy | MaskingChoice) -> MaskingStrategy:
     """Return a masking strategy from a strategy object or a simple name."""
     if not isinstance(masking, str):
@@ -70,9 +100,18 @@ class CleanerPolicy:
 
         policy = CleanerPolicy.default(masking="partial")
         policy = CleanerPolicy.strict().block("credential")
+
+    Semantics of the ``rules`` parameter
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    - ``CleanerPolicy()``          — omitted, loads the built-in default rules.
+    - ``CleanerPolicy(rules=())``  — explicitly empty; no text-pattern rules active.
+    - ``CleanerPolicy(rules=(...))`` — exactly the provided rules, as given.
+
+    Structural protections (sensitive-key redaction, traversal limits, block mode)
+    are always active regardless of the rule set.
     """
 
-    rules: tuple[RedactionRule, ...] = field(default_factory=tuple)
+    rules: tuple[RedactionRule, ...] = field(default_factory=_default_rules_sentinel)
     masking: MaskingStrategy = field(default_factory=PlaceholderMaskingStrategy)
     sensitive_keys: tuple[str, ...] = _DEFAULT_SENSITIVE_KEYS
     block_categories: tuple[str, ...] = ()
@@ -88,7 +127,9 @@ class CleanerPolicy:
         _validate_positive_integer("max_items", self.max_items)
         _validate_positive_integer("max_findings", self.max_findings)
 
-        if not self.rules:
+        # Load default rules only when the sentinel was used (field omitted).
+        # An explicit empty tuple keeps rules empty.
+        if type(self.rules) is _RulesNotProvided:
             from logprivacy.rule_sets.default import default_rules
 
             object.__setattr__(self, "rules", default_rules())
@@ -142,11 +183,17 @@ class CleanerPolicy:
         return cls.strict().block("credential", "token", "secret", "credit_card")
 
     def add_rules(self, *rules: RedactionRule) -> CleanerPolicy:
-        """Return a new policy with additional rules."""
+        """Return a new policy with additional rules appended to the current set."""
         return replace(self, rules=(*self.rules, *rules))
 
     def with_rules(self, *rules: RedactionRule) -> CleanerPolicy:
-        """Return a new policy using exactly the given rules."""
+        """Return a new policy using exactly the given rules.
+
+        Calling ``with_rules()`` with no arguments produces a policy with no
+        text-pattern rules.  This is semantically different from the default
+        constructor (which loads the built-in rules) and is the correct way to
+        build an intentionally rule-free policy.
+        """
         return replace(self, rules=tuple(rules))
 
     def with_masking(self, masking: MaskingStrategy | MaskingChoice) -> CleanerPolicy:

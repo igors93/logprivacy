@@ -9,7 +9,8 @@ from typing import Any, cast
 from logprivacy.audit import AuditReport
 from logprivacy.exceptions import LogBlockedError
 from logprivacy.internal.audit_location import append_mapping_key, append_sequence_index
-from logprivacy.internal.replacement import apply_replacements, select_non_overlapping
+from logprivacy.internal.matches import _DetectedMatch
+from logprivacy.internal.pipeline import FindingResolver, TextRedactor, TextScanner
 from logprivacy.internal.traversal import (
     LIMIT_ITERATION_ERROR,
     LIMIT_MAX_DEPTH,
@@ -22,6 +23,7 @@ from logprivacy.internal.traversal import (
 from logprivacy.masking.strategy import PlaceholderMaskingStrategy
 from logprivacy.policy import CleanerPolicy
 from logprivacy.result import Finding, RedactionResult
+from logprivacy.rules.set import RuleSet
 from logprivacy.structured.mapping import clean_mapping
 from logprivacy.structured.sequence import clean_sequence
 
@@ -35,6 +37,29 @@ class Cleaner:
 
     policy: CleanerPolicy = field(default_factory=CleanerPolicy.default)
 
+    def __post_init__(self) -> None:
+        """Validate the rule set eagerly so callers fail fast on bad configurations."""
+        RuleSet(self.policy.rules)
+
+    # ------------------------------------------------------------------
+    # Pipeline component access (built on demand, no extra slots needed)
+    # ------------------------------------------------------------------
+
+    def _rule_set(self) -> RuleSet:
+        return RuleSet(self.policy.rules)
+
+    def _pipeline(self) -> tuple[TextScanner, FindingResolver, TextRedactor]:
+        rule_set = self._rule_set()
+        return (
+            TextScanner(rule_set),
+            FindingResolver(),
+            TextRedactor(rule_set, self.policy.masking),
+        )
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def clean(self, value: Any) -> Any:
         """Return a fail-closed cleaned copy of a scalar or structured value."""
         state = TraversalState(remaining_items=self.policy.max_items)
@@ -46,15 +71,12 @@ class Cleaner:
 
     def clean_with_result(self, text: str) -> RedactionResult[str]:
         """Return cleaned text and a ``RedactionResult`` with finding details."""
-        findings = select_non_overlapping(self._find(text))
-        self._raise_if_blocked(findings)
-        cleaned, resolved_findings = apply_replacements(
-            text,
-            findings,
-            rules=self.policy.rules,
-            masking=self.policy.masking,
-        )
-        return RedactionResult(original=text, cleaned=cleaned, findings=resolved_findings)
+        scanner, resolver, redactor = self._pipeline()
+        raw_matches = scanner.scan(text)
+        resolved = resolver.resolve(raw_matches)
+        self._raise_if_blocked_matches(resolved)
+        cleaned, findings = redactor.redact(text, resolved)
+        return RedactionResult(original=text, cleaned=cleaned, findings=findings)
 
     def audit(self, value: Any) -> AuditReport:
         """Audit a value and fail closed when traversal cannot inspect everything.
@@ -160,7 +182,6 @@ class Cleaner:
                             category="credential",
                             start=0,
                             end=len(matched),
-                            matched=matched,
                             reason="value is associated with a policy-sensitive key",
                             location=child_path,
                         )
@@ -229,21 +250,24 @@ class Cleaner:
 
     def _sanitize_location_text(self, text: str) -> str:
         """Redact a safe label without applying block-mode side effects."""
-        findings = select_non_overlapping(self._find(text))
-        if not findings:
+        rule_set = self._rule_set()
+        scanner = TextScanner(rule_set)
+        resolver = FindingResolver()
+        raw_matches = scanner.scan(text)
+        resolved = resolver.resolve(raw_matches)
+        if not resolved:
             return text
-        cleaned, _ = apply_replacements(
-            text,
-            findings,
-            rules=self.policy.rules,
-            masking=PlaceholderMaskingStrategy(),
-        )
+        placeholder_redactor = TextRedactor(rule_set, PlaceholderMaskingStrategy())
+        cleaned, _ = placeholder_redactor.redact(text, resolved)
         return cleaned
 
     def _bounded_findings(
         self, text: str, state: TraversalState, *, path: str = ""
     ) -> tuple[Finding, ...]:
-        findings = select_non_overlapping(self._find(text))
+        scanner, resolver, redactor = self._pipeline()
+        raw_matches = scanner.scan(text)
+        resolved = resolver.resolve(raw_matches)
+        _, findings = redactor.redact(text, resolved)
         if path:
             findings = tuple(f.with_location(path) for f in findings)
         return state.take_findings(findings)
@@ -266,20 +290,32 @@ class Cleaner:
         """Return a human-readable explanation of what would be redacted and why."""
         return self.clean_with_result(text).explain()
 
-    def _find(self, text: str) -> tuple[Finding, ...]:
-        """Return all findings detected by active rules."""
-        findings: list[Finding] = []
-        for rule in self.policy.rules:
-            findings.extend(rule.find(text))
-        return tuple(findings)
+    def _find(self, text: str) -> tuple[_DetectedMatch, ...]:
+        """Return all matches detected by active rules (internal use)."""
+        return TextScanner(self._rule_set()).scan(text)
 
     def _raise_if_blocked(self, findings: tuple[Finding, ...]) -> None:
-        """Raise when policy block categories are present."""
+        """Raise when policy block categories are present in public findings."""
         blocked = tuple(
             dict.fromkeys(
                 finding.category
                 for finding in findings
                 if finding.category in self.policy.block_categories
+            )
+        )
+        if blocked:
+            joined = ", ".join(blocked)
+            raise LogBlockedError(
+                f"LogPrivacy blocked sensitive categories: {joined}", categories=blocked
+            )
+
+    def _raise_if_blocked_matches(self, matches: tuple[_DetectedMatch, ...]) -> None:
+        """Raise when policy block categories are present in resolved matches."""
+        blocked = tuple(
+            dict.fromkeys(
+                match.category
+                for match in matches
+                if match.category in self.policy.block_categories
             )
         )
         if blocked:

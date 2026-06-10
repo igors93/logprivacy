@@ -7,7 +7,6 @@ from urllib.parse import parse_qsl, quote_plus, urlsplit, urlunsplit
 
 from logprivacy.cleaner import Cleaner
 from logprivacy.policy import CleanerPolicy
-from logprivacy.result import Finding
 
 # URL-specific secret names that are not always appropriate as global mapping
 # keys.  ``CleanerPolicy.is_sensitive_key()`` remains the primary source of
@@ -48,16 +47,7 @@ def _mask_value(cleaner: Cleaner, value: str, *, category: str, reason: str) -> 
     """Mask one concrete URL component using the configured strategy."""
     if not value:
         return cleaner.policy.masking.mask_category(category)
-
-    finding = Finding(
-        rule_name="url_component",
-        category=category,
-        start=0,
-        end=len(value),
-        matched=value,
-        reason=reason,
-    )
-    return cleaner.policy.masking.mask(finding)
+    return cleaner.policy.masking.mask_value(value, category)
 
 
 def _escape_control_characters(value: str) -> str:

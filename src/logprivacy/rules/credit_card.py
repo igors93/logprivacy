@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from logprivacy.result import Finding
+from logprivacy.internal.matches import _DetectedMatch
 from logprivacy.rules.base import RedactionRule
 
 _CARD_PATTERN = re.compile(r"(?<!\d)(?:\d[ -]?){13,19}(?!\d)")
@@ -37,14 +37,14 @@ class CreditCardRule(RedactionRule):
     name = "credit_card"
     category = "credit_card"
 
-    def find(self, text: str) -> tuple[Finding, ...]:
-        """Return credit card findings."""
-        findings: list[Finding] = []
+    def find(self, text: str) -> tuple[_DetectedMatch, ...]:
+        """Return credit card matches."""
+        matches: list[_DetectedMatch] = []
         for match in _CARD_PATTERN.finditer(text):
             digits = _digits(match.group(0))
             if 13 <= len(digits) <= 19 and _passes_luhn(digits):
-                findings.append(
-                    Finding(
+                matches.append(
+                    _DetectedMatch(
                         rule_name=self.name,
                         category=self.category,
                         start=match.start(),
@@ -53,4 +53,4 @@ class CreditCardRule(RedactionRule):
                         reason="text matched a credit-card-like value that passed Luhn validation",
                     )
                 )
-        return tuple(findings)
+        return tuple(matches)

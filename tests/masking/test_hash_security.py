@@ -14,7 +14,7 @@ def _finding(value: str = "secret-value", category: str = "secret") -> Finding:
         category=category,
         start=0,
         end=len(value),
-        matched=value,
+        _matched=value,
         reason="test value",
     )
 
