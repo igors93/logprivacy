@@ -22,6 +22,7 @@ LIMIT_REPRESENTATION_ERROR = "representation_error"
 LIMIT_ADAPTER_ERROR = "adapter_error"
 LIMIT_UNSUPPORTED_TYPE = "unsupported_type"
 LIMIT_RECURSIVE = "recursive_value"
+LIMIT_UNTRUSTED_MAPPING_KEY = "untrusted_mapping_key"
 
 _EXACT_SCALAR_TYPES = frozenset({int, float, complex, bool, type(None)})
 _T = TypeVar("_T")

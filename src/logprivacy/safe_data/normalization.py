@@ -30,6 +30,7 @@ from logprivacy.internal.traversal import (
     LIMIT_RECURSIVE,
     LIMIT_REPRESENTATION_ERROR,
     LIMIT_UNSUPPORTED_TYPE,
+    LIMIT_UNTRUSTED_MAPPING_KEY,
     MAX_DEPTH_PLACEHOLDER,
     RECURSIVE_PLACEHOLDER,
     TRUNCATED_MAPPING_KEY,
@@ -349,6 +350,10 @@ class _SafeDataNormalizer:
                 )
 
                 if not trusted_key:
+                    # The value is fail-closed masked without traversing the branch.
+                    # Report that limitation so ``complete`` never claims the whole
+                    # input was inspected.
+                    state.mark_limit(LIMIT_UNTRUSTED_MAPPING_KEY)
                     cleaned[output_key] = self._mask_field_value(item, counters=counters)
                     continue
 
