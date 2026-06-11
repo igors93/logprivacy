@@ -9,6 +9,8 @@ from typing import Any, TextIO
 from logprivacy.audit import AuditReport
 from logprivacy.cleaner import Cleaner
 from logprivacy.exceptions import LogPrivacyAssertionError
+from logprivacy.files import clean_file as _clean_file
+from logprivacy.files import scan_file as _scan_file
 from logprivacy.integrations.logging_filter import LogPrivacyFilter, install_handler_filters
 from logprivacy.internal.rendering import (
     DEFAULT_MAX_RENDER_CHARS,
@@ -18,6 +20,7 @@ from logprivacy.internal.rendering import (
 )
 from logprivacy.policy import CleanerPolicy
 from logprivacy.result import RedactionResult
+from logprivacy.url import clean_url as _clean_url
 
 _DEFAULT_CLEANER = Cleaner()
 
@@ -241,8 +244,6 @@ def get_safe_logger(
 
 def clean_url(url: str, *, policy: CleanerPolicy | None = None, redact_full: bool = False) -> str:
     """Clean a URL while preserving safe context."""
-    from logprivacy.url import clean_url as _clean_url
-
     return _clean_url(url, policy=policy, redact_full=redact_full)
 
 
@@ -250,8 +251,6 @@ def scan_file(
     path: str | Path, *, policy: CleanerPolicy | None = None, encoding: str = "utf-8"
 ) -> AuditReport:
     """Scan a text file and return an audit report."""
-    from logprivacy.files import scan_file as _scan_file
-
     return _scan_file(path, policy=policy, encoding=encoding)
 
 
@@ -263,6 +262,4 @@ def clean_file(
     encoding: str = "utf-8",
 ) -> Path:
     """Clean a text file and write the cleaned output."""
-    from logprivacy.files import clean_file as _clean_file
-
     return _clean_file(path, output=output, policy=policy, encoding=encoding)

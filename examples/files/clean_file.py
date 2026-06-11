@@ -22,7 +22,7 @@ print(report.describe())
 
 # Write a cleaned copy
 clean_file(log_path, output=output_path)
-print(Path(output_path).read_text())
+print(Path(output_path).read_text(encoding="utf-8"))
 # INFO  login attempt [EMAIL]
 # DEBUG password=[SECRET] attempt=1
 # INFO  status ok

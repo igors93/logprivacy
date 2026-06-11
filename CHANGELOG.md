@@ -54,6 +54,7 @@ All notable changes to this project will be documented in this file.
 - Implementation was moved out of large package `__init__.py` files into
   named modules such as `cleaner/engine.py`, `files/operations.py`, and
   `safe_data/normalization.py`.
+- Local `.env` files are ignored to reduce the risk of committing secrets.
 
 ### Fixed
 

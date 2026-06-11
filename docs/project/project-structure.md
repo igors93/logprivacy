@@ -61,7 +61,7 @@ Implementation should live in clearly named files:
 
 ```text
 adapters/registry.py
-api/functions.py
+api/public.py
 audit/report.py
 cleaner/engine.py
 exceptions/errors.py

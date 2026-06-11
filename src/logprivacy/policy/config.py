@@ -37,19 +37,10 @@ _DEFAULT_SENSITIVE_KEYS = (
 )
 
 
-# Sentinel that distinguishes "caller passed no rules" (load defaults) from
-# "caller explicitly passed an empty tuple" (use no rules).
-class _UseDefaultRules:
-    pass
-
-
-_USE_DEFAULT_RULES: tuple[RedactionRule, ...] = ()  # sentinel instance marker
-
 # We abuse the type system slightly here: the public field type is
-# tuple[RedactionRule, ...] but the default factory returns _USE_DEFAULT_RULES
+# tuple[RedactionRule, ...] but the default factory returns a sentinel tuple
 # which we detect before validation. After __post_init__ the field always
 # contains a real tuple[RedactionRule, ...].
-_SENTINEL: object = object()
 
 
 def _default_rules_sentinel() -> tuple[RedactionRule, ...]:
@@ -135,9 +126,7 @@ class CleanerPolicy:
         # Load default rules only when the sentinel was used (field omitted).
         # An explicit empty tuple keeps rules empty.
         if type(self.rules) is _RulesNotProvided:
-            from logprivacy.rule_sets.default import default_rules
-
-            object.__setattr__(self, "rules", default_rules())
+            object.__setattr__(self, "rules", _load_default_rules())
 
     @classmethod
     def default(cls, *, masking: MaskingStrategy | MaskingChoice = "placeholder") -> CleanerPolicy:
@@ -147,9 +136,7 @@ class CleanerPolicy:
         Detects emails, credentials, tokens, secrets, URLs, and credit-card-like values.
         Safe for general-purpose log cleaning.
         """
-        from logprivacy.rule_sets.default import default_rules
-
-        return cls(rules=default_rules(), masking=resolve_masking(masking))
+        return cls(rules=_load_default_rules(), masking=resolve_masking(masking))
 
     @classmethod
     def strict(cls, *, masking: MaskingStrategy | MaskingChoice = "placeholder") -> CleanerPolicy:
@@ -159,9 +146,7 @@ class CleanerPolicy:
         Extends ``default()`` with IP address and phone number detection.
         Suitable when internal IPs or phone numbers must not appear in logs.
         """
-        from logprivacy.rule_sets.strict import strict_rules
-
-        return cls(rules=strict_rules(), masking=resolve_masking(masking))
+        return cls(rules=_load_strict_rules(), masking=resolve_masking(masking))
 
     @classmethod
     def web(cls, *, masking: MaskingStrategy | MaskingChoice = "placeholder") -> CleanerPolicy:
@@ -171,9 +156,7 @@ class CleanerPolicy:
         Detects URLs, credentials, tokens, and secrets. Omits email, credit
         card, IP address, and phone rules. Suitable for HTTP access log cleaning.
         """
-        from logprivacy.rule_sets.web import web_rules
-
-        return cls(rules=web_rules(), masking=resolve_masking(masking))
+        return cls(rules=_load_web_rules(), masking=resolve_masking(masking))
 
     @classmethod
     def production(cls) -> CleanerPolicy:
@@ -265,3 +248,23 @@ def _validate_field_rules(rules: tuple[FieldRule, ...]) -> None:
     for rule in rules:
         if not isinstance(rule, FieldRule):
             raise TypeError("field_rules must contain only FieldRule instances")
+
+
+def _load_default_rules() -> tuple[RedactionRule, ...]:
+    # Keep rule-set imports local to avoid the package initialization cycle:
+    # rules -> masking -> policy -> rule_sets -> rules.
+    from logprivacy.rule_sets.default import default_rules
+
+    return default_rules()
+
+
+def _load_strict_rules() -> tuple[RedactionRule, ...]:
+    from logprivacy.rule_sets.strict import strict_rules
+
+    return strict_rules()
+
+
+def _load_web_rules() -> tuple[RedactionRule, ...]:
+    from logprivacy.rule_sets.web import web_rules
+
+    return web_rules()

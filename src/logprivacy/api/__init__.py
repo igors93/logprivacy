@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from logprivacy.api.functions import (
+from logprivacy.api.public import (
     assert_clean,
     audit,
     clean,
