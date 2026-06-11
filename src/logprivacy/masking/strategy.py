@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from logprivacy.result import Finding
 
 _HASH_DOMAIN = b"logprivacy.hash.v1"
+_HMAC_DOMAIN = b"logprivacy.hmac.v1"
 _MIN_HASH_LENGTH = 12
 _MAX_HASH_LENGTH = sha256().digest_size * 2
 _MIN_HMAC_KEY_BYTES = 16
@@ -174,6 +175,17 @@ _MIN_HMAC_DIGEST_SIZE = 8
 _MAX_HMAC_DIGEST_SIZE = 64  # sha256 hex length
 
 
+def _build_hmac_payload(category: str, value: str) -> bytes:
+    """Frame HMAC inputs with domain separation and unambiguous boundaries."""
+    return b"".join(
+        (
+            _frame(_HMAC_DOMAIN),
+            _frame(category.encode("utf-8")),
+            _frame(value.encode("utf-8")),
+        )
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class HMACMaskingStrategy:
     """Deterministic pseudonymization using HMAC-SHA256.
@@ -188,7 +200,8 @@ class HMACMaskingStrategy:
     Security:
     - ``key`` never appears in ``repr``, ``str``, exceptions, or serialization.
     - ``key`` must be bytes (no implicit string coercion).
-    - Empty keys are rejected.
+    - ``key`` must contain at least 16 bytes; 32 random bytes are recommended.
+    - category and value are length-framed under a dedicated HMAC domain.
     - ``digest_size`` is the number of hexadecimal characters in the output.
     """
 
@@ -200,6 +213,10 @@ class HMACMaskingStrategy:
             raise TypeError("HMACMaskingStrategy key must be bytes")
         if not self.key:
             raise ValueError("HMACMaskingStrategy key must not be empty")
+        if len(self.key) < _MIN_HMAC_KEY_BYTES:
+            raise ValueError(
+                f"HMACMaskingStrategy key must contain at least {_MIN_HMAC_KEY_BYTES} bytes"
+            )
         if isinstance(self.digest_size, bool) or not isinstance(self.digest_size, int):
             raise TypeError("digest_size must be an integer")
         if not (_MIN_HMAC_DIGEST_SIZE <= self.digest_size <= _MAX_HMAC_DIGEST_SIZE):
@@ -213,8 +230,8 @@ class HMACMaskingStrategy:
 
     def mask_value(self, value: str, category: str) -> str:
         """Return a pseudonymous correlation token for value and category."""
-        message = category.encode("utf-8") + b" " + value.encode("utf-8")
-        digest = hmac.new(self.key, message, sha256).hexdigest()
+        payload = _build_hmac_payload(category, value)
+        digest = hmac.new(self.key, payload, sha256).hexdigest()
         label = _HMAC_SAFE_CATEGORY_PATTERN.sub("_", category).upper() or "REDACTED"
         return f"[{label}:hmac:{digest[: self.digest_size]}]"
 
