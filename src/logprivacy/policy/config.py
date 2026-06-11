@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
     from logprivacy.path_rules import PathRule
@@ -21,7 +21,33 @@ from logprivacy.masking.strategy import (
 from logprivacy.rules.base import RedactionRule
 
 MaskingChoice = Literal["placeholder", "partial", "hash"]
+_BasePolicyName = Literal["default", "strict", "web", "production", "none"]
 
+_SCHEMA_VERSION = 1
+_SUPPORTED_BASES: tuple[_BasePolicyName, ...] = (
+    "default",
+    "strict",
+    "web",
+    "production",
+    "none",
+)
+_DECLARATIVE_FIELDS = frozenset(
+    {
+        "schema_version",
+        "base",
+        "field_rules",
+        "path_rules",
+        "allowlist",
+        "sensitive_keys",
+        "max_depth",
+        "max_items",
+        "max_findings",
+        "block_categories",
+        "masking",
+        "clean_mapping_keys",
+        "clean_unknown_objects",
+    }
+)
 
 _DEFAULT_SENSITIVE_KEYS = (
     "password",
@@ -42,22 +68,13 @@ _DEFAULT_SENSITIVE_KEYS = (
 )
 
 
-# We abuse the type system slightly here: the public field type is
-# tuple[RedactionRule, ...] but the default factory returns a sentinel tuple
-# which we detect before validation. After __post_init__ the field always
-# contains a real tuple[RedactionRule, ...].
-
-
 def _default_rules_sentinel() -> tuple[RedactionRule, ...]:
-    """Factory that returns the internal sentinel for 'use defaults'."""
-    # We need a unique object we can detect in __post_init__.  We return an
-    # empty tuple subclass whose identity we check, so the public type remains
-    # tuple[RedactionRule, ...].
+    """Return the internal sentinel for an omitted rules argument."""
     return _RULES_NOT_PROVIDED
 
 
 class _RulesNotProvided(tuple):  # type: ignore[type-arg]
-    """Singleton sentinel: rules field was not specified by the caller."""
+    """Singleton sentinel indicating that built-in default rules are required."""
 
 
 _RULES_NOT_PROVIDED = _RulesNotProvided()
@@ -73,51 +90,18 @@ def resolve_masking(masking: MaskingStrategy | MaskingChoice) -> MaskingStrategy
         return PartialMaskingStrategy()
     if masking == "hash":
         return HashMaskingStrategy()
-    raise ValueError(f"Unknown masking strategy: {masking!r}")
+    raise ValueError("Unknown masking strategy")
 
 
 @dataclass(frozen=True, slots=True)
 class CleanerPolicy:
-    """
-    Configuration for a ``Cleaner`` instance.
-
-    A policy controls:
-
-    - which rules are active (``rules``)
-    - how findings are masked (``masking``)
-    - how structured data is traversed (``max_depth``, ``max_items``)
-    - how many audit findings are retained (``max_findings``)
-    - which mapping keys are treated as sensitive (``sensitive_keys``)
-    - which structured field rules are active (``field_rules``)
-    - which path-based rules are active (``path_rules``)
-    - which field paths are explicitly allowed (``allowlist``)
-    - which categories raise an exception instead of being redacted (``block_categories``)
-    - the pseudonymizer for ``pseudonymize`` actions (``pseudonymizer``)
-
-    Use the factory class methods to get a sensible starting point, then compose
-    further with ``add_rules()``, ``add_field_rules()``, ``with_masking()``, or
-    ``block()``.
-
-    Example::
-
-        policy = CleanerPolicy.default(masking="partial")
-        policy = CleanerPolicy.strict().block("credential")
-
-    Semantics of the ``rules`` parameter
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    - ``CleanerPolicy()``          — omitted, loads the built-in default rules.
-    - ``CleanerPolicy(rules=())``  — explicitly empty; no text-pattern rules active.
-    - ``CleanerPolicy(rules=(...))`` — exactly the provided rules, as given.
-
-    Structural protections (sensitive-key redaction, traversal limits, block mode)
-    are always active regardless of the rule set.
-    """
+    """Configuration for a :class:`logprivacy.cleaner.Cleaner` instance."""
 
     rules: tuple[RedactionRule, ...] = field(default_factory=_default_rules_sentinel)
     masking: MaskingStrategy = field(default_factory=PlaceholderMaskingStrategy)
     sensitive_keys: tuple[str, ...] = _DEFAULT_SENSITIVE_KEYS
     field_rules: tuple[FieldRule, ...] = ()
-    path_rules: tuple[object, ...] = ()  # tuple[PathRule, ...] — avoid circular import
+    path_rules: tuple[object, ...] = ()
     allowlist: tuple[str, ...] | None = None
     pseudonymizer: HMACMaskingStrategy | None = field(default=None, repr=False)
     block_categories: tuple[str, ...] = ()
@@ -128,74 +112,48 @@ class CleanerPolicy:
     clean_unknown_objects: bool = False
 
     def __post_init__(self) -> None:
-        """Validate traversal limits and load default rules when required."""
+        """Validate policy values and load default rules when omitted."""
         _validate_non_negative_integer("max_depth", self.max_depth)
         _validate_positive_integer("max_items", self.max_items)
         _validate_positive_integer("max_findings", self.max_findings)
+        _validate_string_tuple("sensitive_keys", self.sensitive_keys)
+        _validate_string_tuple("block_categories", self.block_categories)
+        _validate_boolean("clean_mapping_keys", self.clean_mapping_keys)
+        _validate_boolean("clean_unknown_objects", self.clean_unknown_objects)
         _validate_field_rules(self.field_rules)
         _validate_path_rules(self.path_rules)
         if self.allowlist is not None:
             _validate_allowlist_paths(self.allowlist)
 
-        # Load default rules only when the sentinel was used (field omitted).
-        # An explicit empty tuple keeps rules empty.
         if type(self.rules) is _RulesNotProvided:
             object.__setattr__(self, "rules", _load_default_rules())
 
     @classmethod
     def default(cls, *, masking: MaskingStrategy | MaskingChoice = "placeholder") -> CleanerPolicy:
-        """
-        Return the balanced default policy.
-
-        Detects emails, credentials, tokens, secrets, URLs, and credit-card-like values.
-        Safe for general-purpose log cleaning.
-        """
+        """Return the balanced default policy."""
         return cls(rules=_load_default_rules(), masking=resolve_masking(masking))
 
     @classmethod
     def strict(cls, *, masking: MaskingStrategy | MaskingChoice = "placeholder") -> CleanerPolicy:
-        """
-        Return a stricter policy for sensitive environments.
-
-        Extends ``default()`` with IP address and phone number detection.
-        Suitable when internal IPs or phone numbers must not appear in logs.
-        """
+        """Return a stricter policy for sensitive environments."""
         return cls(rules=_load_strict_rules(), masking=resolve_masking(masking))
 
     @classmethod
     def web(cls, *, masking: MaskingStrategy | MaskingChoice = "placeholder") -> CleanerPolicy:
-        """
-        Return a policy focused on web and HTTP logs.
-
-        Detects URLs, credentials, tokens, and secrets. Omits email, credit
-        card, IP address, and phone rules. Suitable for HTTP access log cleaning.
-        """
+        """Return a policy focused on web and HTTP logs."""
         return cls(rules=_load_web_rules(), masking=resolve_masking(masking))
 
     @classmethod
     def production(cls) -> CleanerPolicy:
-        """
-        Return a production-safety policy that raises on high-risk categories.
-
-        Extends ``strict()`` and blocks the ``credential``, ``token``, ``secret``,
-        and ``credit_card`` categories so that a ``LogBlockedError`` is raised if any
-        of those values reach a log statement. Use this when you want logging code to
-        fail loudly instead of silently masking sensitive data.
-        """
+        """Return a strict policy that blocks high-risk categories."""
         return cls.strict().block("credential", "token", "secret", "credit_card")
 
     def add_rules(self, *rules: RedactionRule) -> CleanerPolicy:
-        """Return a new policy with additional rules appended to the current set."""
+        """Return a new policy with rules appended."""
         return replace(self, rules=(*self.rules, *rules))
 
     def with_rules(self, *rules: RedactionRule) -> CleanerPolicy:
-        """Return a new policy using exactly the given rules.
-
-        Calling ``with_rules()`` with no arguments produces a policy with no
-        text-pattern rules.  This is semantically different from the default
-        constructor (which loads the built-in rules) and is the correct way to
-        build an intentionally rule-free policy.
-        """
+        """Return a new policy using exactly the given text rules."""
         return replace(self, rules=tuple(rules))
 
     def with_masking(self, masking: MaskingStrategy | MaskingChoice) -> CleanerPolicy:
@@ -203,16 +161,11 @@ class CleanerPolicy:
         return replace(self, masking=resolve_masking(masking))
 
     def add_field_rules(self, *rules: FieldRule) -> CleanerPolicy:
-        """Return a new policy with structured field rules appended.
-
-        ``to_safe_data()`` evaluates explicit field rules in declaration order.
-        Legacy ``sensitive_keys`` masking is applied only when no explicit field
-        rule matches a field name.
-        """
+        """Return a new policy with structured field rules appended."""
         return replace(self, field_rules=(*self.field_rules, *rules))
 
     def with_field_rules(self, *rules: FieldRule) -> CleanerPolicy:
-        """Return a new policy using exactly the given structured field rules."""
+        """Return a new policy using exactly the given field rules."""
         return replace(self, field_rules=tuple(rules))
 
     def add_path_rules(self, *rules: object) -> CleanerPolicy:
@@ -224,25 +177,22 @@ class CleanerPolicy:
         return replace(self, path_rules=tuple(rules))
 
     def allow_paths(self, *paths: str) -> CleanerPolicy:
-        """Return a new policy with an allowlist of permitted field paths.
-
-        When an allowlist is configured, any field not matching the allowlist
-        (or not on the path to an allowed field) is removed from the output.
-        """
+        """Return a new policy with an allowlist of permitted paths."""
         return replace(self, allowlist=tuple(paths))
 
     def with_pseudonymizer(self, pseudonymizer: HMACMaskingStrategy) -> CleanerPolicy:
-        """Return a new policy with a pseudonymizer for 'pseudonymize' actions."""
+        """Return a new policy with a pseudonymizer for structured actions."""
         return replace(self, pseudonymizer=pseudonymizer)
 
     def block(self, *categories: str) -> CleanerPolicy:
         """Return a new policy that blocks selected categories."""
         return replace(
-            self, block_categories=tuple(dict.fromkeys((*self.block_categories, *categories)))
+            self,
+            block_categories=tuple(dict.fromkeys((*self.block_categories, *categories))),
         )
 
     def without_categories(self, *categories: str) -> CleanerPolicy:
-        """Return a new policy with selected categories disabled."""
+        """Return a new policy with selected text-rule categories disabled."""
         blocked = set(categories)
         return replace(
             self,
@@ -250,12 +200,7 @@ class CleanerPolicy:
         )
 
     def is_sensitive_key(self, key: object) -> bool:
-        """Return whether a mapping key requires fail-closed value redaction.
-
-        Exact scalar and byte-like keys are converted without invoking arbitrary
-        user code. Unknown key objects are treated as sensitive because their
-        representation cannot be trusted safely.
-        """
+        """Return whether a mapping key requires fail-closed value redaction."""
         key_text, trusted = safe_mapping_key_text(key)
         if not trusted:
             return True
@@ -265,137 +210,290 @@ class CleanerPolicy:
 
     @classmethod
     def from_dict(cls, data: object) -> CleanerPolicy:
-        """Build a policy from a configuration dict (schema version 1)."""
-        if not isinstance(data, dict):
-            raise PolicyConfigurationError("policy configuration must be a mapping")
+        """Build a policy from a strictly validated schema-version-1 mapping.
 
-        unknown = set(data.keys()) - {
-            "schema_version",
-            "base",
-            "field_rules",
-            "path_rules",
-            "allowlist",
-            "sensitive_keys",
-            "max_depth",
-            "max_items",
-            "max_findings",
-            "block_categories",
-            "masking",
-        }
+        Every accepted field is applied. Unknown fields and invalid values fail
+        closed with a safe configuration-path error; source values are not echoed.
+        The optional ``pseudonymizer`` is intentionally not part of the schema and
+        must be injected separately with :meth:`with_pseudonymizer`.
+        """
+        mapping = _require_mapping(data, "policy configuration")
+        _validate_string_keys(mapping, "policy configuration")
+
+        unknown = set(mapping) - _DECLARATIVE_FIELDS
         if unknown:
             raise PolicyConfigurationError(
-                f"unknown policy configuration fields: {', '.join(sorted(unknown))}"
+                "unknown policy configuration fields: " + ", ".join(_sorted_string_values(unknown))
             )
 
-        schema_version = data.get("schema_version")
-        if schema_version != 1:
+        schema_version = mapping.get("schema_version")
+        if schema_version != _SCHEMA_VERSION:
             raise PolicyConfigurationError(
-                f"unsupported schema_version: {schema_version!r}; only version 1 is supported"
+                "unsupported schema_version; only version 1 is supported"
             )
 
-        base_name = data.get("base", "default")
-        if base_name == "default":
-            policy = cls.default()
-        elif base_name == "strict":
-            policy = cls.strict()
-        elif base_name == "web":
-            policy = cls.web()
-        elif base_name == "production":
-            policy = cls.production()
-        else:
-            raise PolicyConfigurationError(
-                f"unknown base policy: {base_name!r}; "
-                "must be one of: default, strict, web, production"
+        policy = _policy_from_base(mapping.get("base", "default"))
+
+        if "masking" in mapping:
+            masking = mapping["masking"]
+            if not isinstance(masking, str) or masking not in {"placeholder", "partial", "hash"}:
+                raise PolicyConfigurationError("invalid value at masking")
+            policy = policy.with_masking(cast(MaskingChoice, masking))
+
+        if "sensitive_keys" in mapping:
+            sensitive_keys = _parse_string_list(mapping["sensitive_keys"], "sensitive_keys")
+            policy = replace(policy, sensitive_keys=sensitive_keys)
+
+        if "block_categories" in mapping:
+            block_categories = _parse_string_list(mapping["block_categories"], "block_categories")
+            policy = replace(
+                policy,
+                block_categories=tuple(dict.fromkeys(block_categories)),
             )
 
-        # Parse field_rules
-        raw_field_rules = data.get("field_rules", [])
+        if "max_depth" in mapping:
+            policy = replace(
+                policy,
+                max_depth=_parse_non_negative_integer(mapping["max_depth"], "max_depth"),
+            )
+        if "max_items" in mapping:
+            policy = replace(
+                policy,
+                max_items=_parse_positive_integer(mapping["max_items"], "max_items"),
+            )
+        if "max_findings" in mapping:
+            policy = replace(
+                policy,
+                max_findings=_parse_positive_integer(mapping["max_findings"], "max_findings"),
+            )
+        if "clean_mapping_keys" in mapping:
+            policy = replace(
+                policy,
+                clean_mapping_keys=_parse_boolean(
+                    mapping["clean_mapping_keys"], "clean_mapping_keys"
+                ),
+            )
+        if "clean_unknown_objects" in mapping:
+            policy = replace(
+                policy,
+                clean_unknown_objects=_parse_boolean(
+                    mapping["clean_unknown_objects"], "clean_unknown_objects"
+                ),
+            )
+
+        raw_field_rules = mapping.get("field_rules", [])
         if not isinstance(raw_field_rules, list):
             raise PolicyConfigurationError("field_rules must be a list")
-        field_rules: list[FieldRule] = []
-        for i, raw in enumerate(raw_field_rules):
-            field_rules.append(_parse_field_rule_dict(raw, index=i))
+        field_rules = tuple(
+            _parse_field_rule_dict(raw, index=index) for index, raw in enumerate(raw_field_rules)
+        )
         if field_rules:
             policy = policy.add_field_rules(*field_rules)
 
-        # Parse path_rules
-        raw_path_rules = data.get("path_rules", [])
+        raw_path_rules = mapping.get("path_rules", [])
         if not isinstance(raw_path_rules, list):
             raise PolicyConfigurationError("path_rules must be a list")
+        path_rules = tuple(
+            _parse_path_rule_dict(raw, index=index) for index, raw in enumerate(raw_path_rules)
+        )
+        if path_rules:
+            policy = policy.add_path_rules(*path_rules)
 
-        path_rules_parsed: list[PathRule] = []
-        for i, raw in enumerate(raw_path_rules):
-            path_rules_parsed.append(_parse_path_rule_dict(raw, index=i))
-        if path_rules_parsed:
-            policy = policy.add_path_rules(*path_rules_parsed)
-
-        # Parse allowlist
-        raw_allowlist = data.get("allowlist")
+        raw_allowlist = mapping.get("allowlist")
         if raw_allowlist is not None:
-            if not isinstance(raw_allowlist, dict):
-                raise PolicyConfigurationError("allowlist must be a mapping")
-            unknown_al = set(raw_allowlist.keys()) - {"paths"}
-            if unknown_al:
+            allowlist = _require_mapping(raw_allowlist, "allowlist")
+            _validate_string_keys(allowlist, "allowlist")
+            unknown_allowlist = set(allowlist) - {"paths"}
+            if unknown_allowlist:
                 raise PolicyConfigurationError(
-                    f"unknown allowlist fields: {', '.join(sorted(unknown_al))}"
+                    "unknown allowlist fields: "
+                    + ", ".join(_sorted_string_values(unknown_allowlist))
                 )
-            paths = raw_allowlist.get("paths", [])
-            if not isinstance(paths, list):
-                raise PolicyConfigurationError("allowlist.paths must be a list")
-            for j, p in enumerate(paths):
-                if not isinstance(p, str):
-                    raise PolicyConfigurationError(f"allowlist.paths[{j}] must be a string")
-            policy = policy.allow_paths(*paths)
+            paths = _parse_string_list(allowlist.get("paths", []), "allowlist.paths")
+            try:
+                policy = policy.allow_paths(*paths)
+            except (TypeError, ValueError) as exc:
+                raise PolicyConfigurationError("invalid value at allowlist.paths") from exc
 
         return policy
 
     def to_dict(self) -> dict[str, object]:
-        """Serialize this policy to a JSON-safe dict (schema version 1)."""
+        """Serialize all declaratively representable policy controls.
+
+        Text rules must match one built-in base policy (or be empty). Custom text
+        rules are rejected instead of being silently discarded. The HMAC
+        pseudonymizer and its key are never exported; inject them after loading.
+        """
         from logprivacy.path_rules import PathRule
 
-        result: dict[str, object] = {"schema_version": 1}
-        result["field_rules"] = [
-            {
-                "match": fr.match,
-                "mode": fr.mode,
-                "action": fr.action,
-                **({"max_chars": fr.max_chars} if fr.max_chars is not None else {}),
-                **({"category": fr.category} if fr.category else {}),
-            }
-            for fr in self.field_rules
-        ]
-        result["path_rules"] = [
-            {
-                "path": pr.path,
-                "mode": pr.mode,
-                "action": pr.action,
-                **({"max_chars": pr.max_chars} if pr.max_chars is not None else {}),
-                **({"category": pr.category} if pr.category else {}),
-            }
-            for pr in self.path_rules
-            if isinstance(pr, PathRule)
-        ]
+        base = _declarative_base_for_rules(self.rules)
+        result: dict[str, object] = {
+            "schema_version": _SCHEMA_VERSION,
+            "base": base,
+            "masking": _declarative_masking_name(self.masking),
+            "sensitive_keys": list(self.sensitive_keys),
+            "block_categories": list(self.block_categories),
+            "clean_mapping_keys": self.clean_mapping_keys,
+            "clean_unknown_objects": self.clean_unknown_objects,
+            "max_depth": self.max_depth,
+            "max_items": self.max_items,
+            "max_findings": self.max_findings,
+            "field_rules": [
+                {
+                    "match": rule.match,
+                    "mode": rule.mode,
+                    "action": rule.action,
+                    **({"max_chars": rule.max_chars} if rule.max_chars is not None else {}),
+                    **({"category": rule.category} if rule.category else {}),
+                }
+                for rule in self.field_rules
+            ],
+            "path_rules": [
+                {
+                    "path": rule.path,
+                    "mode": rule.mode,
+                    "action": rule.action,
+                    **({"max_chars": rule.max_chars} if rule.max_chars is not None else {}),
+                    **({"category": rule.category} if rule.category else {}),
+                }
+                for rule in self.path_rules
+                if isinstance(rule, PathRule)
+            ],
+        }
         if self.allowlist is not None:
             result["allowlist"] = {"paths": list(self.allowlist)}
-        # Do NOT export pseudonymizer or its key
         return result
 
     @classmethod
     def from_json(cls, text: str) -> CleanerPolicy:
-        """Build a policy from a JSON string."""
+        """Build a policy from JSON without reflecting source content in errors."""
         import json
 
+        if not isinstance(text, str):
+            raise TypeError("policy JSON must be a string")
         try:
             data = json.loads(text)
         except json.JSONDecodeError as exc:
-            raise PolicyConfigurationError(f"invalid JSON: {exc}") from exc
+            raise PolicyConfigurationError("invalid JSON policy configuration") from exc
         return cls.from_dict(data)
 
     def to_json(self, *, sort_keys: bool = True) -> str:
-        """Serialize this policy to a JSON string."""
+        """Serialize this policy to deterministic JSON."""
         import json
 
-        return json.dumps(self.to_dict(), allow_nan=False, sort_keys=sort_keys)
+        return json.dumps(
+            self.to_dict(),
+            allow_nan=False,
+            ensure_ascii=False,
+            sort_keys=sort_keys,
+            separators=(",", ":"),
+        )
+
+
+def _policy_from_base(value: object) -> CleanerPolicy:
+    if not isinstance(value, str) or value not in _SUPPORTED_BASES:
+        raise PolicyConfigurationError("unknown base policy")
+    if value == "default":
+        return CleanerPolicy.default()
+    if value == "strict":
+        return CleanerPolicy.strict()
+    if value == "web":
+        return CleanerPolicy.web()
+    if value == "production":
+        return CleanerPolicy.production()
+    return CleanerPolicy(rules=())
+
+
+def _declarative_base_for_rules(rules: tuple[RedactionRule, ...]) -> _BasePolicyName:
+    signature = _rules_signature(rules)
+    if not rules:
+        return "none"
+    if signature == _rules_signature(_load_default_rules()):
+        return "default"
+    if signature == _rules_signature(_load_strict_rules()):
+        return "strict"
+    if signature == _rules_signature(_load_web_rules()):
+        return "web"
+    raise PolicyConfigurationError(
+        "policy text rules cannot be represented by the declarative schema"
+    )
+
+
+def _rules_signature(rules: tuple[RedactionRule, ...]) -> tuple[tuple[object, ...], ...]:
+    signatures: list[tuple[object, ...]] = []
+    for rule in rules:
+        pattern = getattr(rule, "pattern", None)
+        signatures.append(
+            (
+                type(rule).__module__,
+                type(rule).__qualname__,
+                getattr(rule, "name", None),
+                getattr(rule, "category", None),
+                getattr(pattern, "pattern", None),
+                getattr(pattern, "flags", None),
+                getattr(rule, "reason", None),
+            )
+        )
+    return tuple(signatures)
+
+
+def _declarative_masking_name(masking: MaskingStrategy) -> MaskingChoice:
+    if isinstance(masking, PlaceholderMaskingStrategy) and masking == PlaceholderMaskingStrategy():
+        return "placeholder"
+    if isinstance(masking, PartialMaskingStrategy) and masking == PartialMaskingStrategy():
+        return "partial"
+    if isinstance(masking, HashMaskingStrategy) and masking == HashMaskingStrategy():
+        return "hash"
+    raise PolicyConfigurationError(
+        "masking strategy cannot be represented by the declarative schema"
+    )
+
+
+def _require_mapping(value: object, path: str) -> dict[object, object]:
+    if not isinstance(value, dict):
+        raise PolicyConfigurationError(f"{path} must be a mapping")
+    return value
+
+
+def _validate_string_keys(mapping: dict[object, object], path: str) -> None:
+    if any(not isinstance(key, str) for key in mapping):
+        raise PolicyConfigurationError(f"{path} keys must be strings")
+
+
+def _parse_string_list(value: object, path: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise PolicyConfigurationError(f"{path} must be a list")
+    parsed: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise PolicyConfigurationError(f"{path}[{index}] must be a string")
+        if not item.strip():
+            raise PolicyConfigurationError(f"{path}[{index}] must be a non-empty string")
+        parsed.append(item)
+    return tuple(parsed)
+
+
+def _sorted_string_values(values: set[object]) -> list[str]:
+    """Return validated string values in deterministic order for safe errors."""
+    return sorted(value for value in values if isinstance(value, str))
+
+
+def _parse_non_negative_integer(value: object, path: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise PolicyConfigurationError(f"invalid value at {path}")
+    return value
+
+
+def _parse_positive_integer(value: object, path: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise PolicyConfigurationError(f"invalid value at {path}")
+    return value
+
+
+def _parse_boolean(value: object, path: str) -> bool:
+    if not isinstance(value, bool):
+        raise PolicyConfigurationError(f"invalid value at {path}")
+    return value
 
 
 def _validate_non_negative_integer(name: str, value: int) -> None:
@@ -410,6 +508,18 @@ def _validate_positive_integer(name: str, value: int) -> None:
         raise TypeError(f"{name} must be an integer")
     if value <= 0:
         raise ValueError(f"{name} must be greater than zero")
+
+
+def _validate_boolean(name: str, value: bool) -> None:
+    if not isinstance(value, bool):
+        raise TypeError(f"{name} must be a boolean")
+
+
+def _validate_string_tuple(name: str, values: tuple[str, ...]) -> None:
+    if not isinstance(values, tuple):
+        raise TypeError(f"{name} must be a tuple")
+    if any(not isinstance(value, str) or not value.strip() for value in values):
+        raise TypeError(f"{name} must contain only non-empty strings")
 
 
 def _validate_field_rules(rules: tuple[FieldRule, ...]) -> None:
@@ -430,58 +540,60 @@ def _validate_allowlist_paths(paths: tuple[str, ...]) -> None:
     from logprivacy.path_rules.allowlist import _parse_allowlist_path
 
     for path in paths:
-        _parse_allowlist_path(path)  # will raise ValueError if invalid
+        _parse_allowlist_path(path)
 
 
 def _parse_field_rule_dict(raw: object, *, index: int) -> FieldRule:
     prefix = f"field_rules[{index}]"
-    if not isinstance(raw, dict):
-        raise PolicyConfigurationError(f"{prefix} must be a mapping")
-    unknown = set(raw.keys()) - {"match", "mode", "action", "max_chars", "category"}
+    mapping = _require_mapping(raw, prefix)
+    _validate_string_keys(mapping, prefix)
+    unknown = set(mapping) - {"match", "mode", "action", "max_chars", "category"}
     if unknown:
-        raise PolicyConfigurationError(f"{prefix}: unknown fields: {', '.join(sorted(unknown))}")
-    match = raw.get("match")
+        raise PolicyConfigurationError(
+            f"{prefix}: unknown fields: {', '.join(_sorted_string_values(unknown))}"
+        )
+    match = mapping.get("match")
     if not isinstance(match, str) or not match:
         raise PolicyConfigurationError(f"{prefix}.match must be a non-empty string")
-    mode = raw.get("mode", "exact")
-    action = raw.get("action", "mask")
-    max_chars = raw.get("max_chars")
-    category = raw.get("category", "")
     try:
         return FieldRule(
-            match=match, mode=mode, action=action, max_chars=max_chars, category=category
+            match=match,
+            mode=mapping.get("mode", "exact"),  # type: ignore[arg-type]
+            action=mapping.get("action", "mask"),  # type: ignore[arg-type]
+            max_chars=mapping.get("max_chars"),  # type: ignore[arg-type]
+            category=mapping.get("category", ""),  # type: ignore[arg-type]
         )
     except (ValueError, TypeError) as exc:
-        raise PolicyConfigurationError(f"{prefix}: {exc}") from exc
+        raise PolicyConfigurationError(f"invalid value at {prefix}") from exc
 
 
 def _parse_path_rule_dict(raw: object, *, index: int) -> PathRule:
     from logprivacy.path_rules import PathRule
 
     prefix = f"path_rules[{index}]"
-    if not isinstance(raw, dict):
-        raise PolicyConfigurationError(f"{prefix} must be a mapping")
-    unknown = set(raw.keys()) - {"path", "mode", "action", "max_chars", "category"}
+    mapping = _require_mapping(raw, prefix)
+    _validate_string_keys(mapping, prefix)
+    unknown = set(mapping) - {"path", "mode", "action", "max_chars", "category"}
     if unknown:
-        raise PolicyConfigurationError(f"{prefix}: unknown fields: {', '.join(sorted(unknown))}")
-    path_val = raw.get("path")
-    if not isinstance(path_val, str) or not path_val:
+        raise PolicyConfigurationError(
+            f"{prefix}: unknown fields: {', '.join(_sorted_string_values(unknown))}"
+        )
+    path_value = mapping.get("path")
+    if not isinstance(path_value, str) or not path_value:
         raise PolicyConfigurationError(f"{prefix}.path must be a non-empty string")
-    mode = raw.get("mode", "exact")
-    action = raw.get("action", "mask")
-    max_chars = raw.get("max_chars")
-    category = raw.get("category", "")
     try:
         return PathRule(
-            path=path_val, mode=mode, action=action, max_chars=max_chars, category=category
+            path=path_value,
+            mode=mapping.get("mode", "exact"),  # type: ignore[arg-type]
+            action=mapping.get("action", "mask"),  # type: ignore[arg-type]
+            max_chars=mapping.get("max_chars"),  # type: ignore[arg-type]
+            category=mapping.get("category", ""),  # type: ignore[arg-type]
         )
     except (ValueError, TypeError) as exc:
-        raise PolicyConfigurationError(f"{prefix}: {exc}") from exc
+        raise PolicyConfigurationError(f"invalid value at {prefix}") from exc
 
 
 def _load_default_rules() -> tuple[RedactionRule, ...]:
-    # Keep rule-set imports local to avoid the package initialization cycle:
-    # rules -> masking -> policy -> rule_sets -> rules.
     from logprivacy.rule_sets.default import default_rules
 
     return default_rules()
