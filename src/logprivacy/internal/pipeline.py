@@ -2,16 +2,20 @@
 
 TextScanner   — runs rules against text, validates matches, returns _DetectedMatch list
 FindingResolver — resolves overlapping matches deterministically
-TextRedactor  — applies replacements right-to-left, produces public Finding objects
+TextRedactor  — assembles replacements in one pass, produces public Finding objects
 """
 
 from __future__ import annotations
 
-from logprivacy.exceptions import RuleValidationError
+from logprivacy.exceptions import InputLimitExceededError, RuleValidationError
 from logprivacy.internal.matches import _DetectedMatch
 from logprivacy.masking.strategy import MaskingStrategy
 from logprivacy.result import Finding
+from logprivacy.rules.base import RedactionRule
 from logprivacy.rules.set import RuleSet
+
+DEFAULT_MAX_TEXT_CHARS = 1_000_000
+DEFAULT_MAX_MATCHES = 10_000
 
 # ---------------------------------------------------------------------------
 # TextScanner
@@ -25,16 +29,48 @@ class TextScanner:
     redactor never has to look up a rule by name.
     """
 
-    __slots__ = ("_rule_set",)
+    __slots__ = ("_rule_set", "_max_text_chars", "_max_matches")
 
-    def __init__(self, rule_set: RuleSet) -> None:
+    def __init__(
+        self,
+        rule_set: RuleSet,
+        *,
+        max_text_chars: int = DEFAULT_MAX_TEXT_CHARS,
+        max_matches: int = DEFAULT_MAX_MATCHES,
+    ) -> None:
         self._rule_set = rule_set
+        self._max_text_chars = max_text_chars
+        self._max_matches = max_matches
 
     def scan(self, text: str) -> tuple[_DetectedMatch, ...]:
-        """Return all matches found by the active rules, each validated."""
+        """Return validated matches without exceeding text or match budgets."""
+        if len(text) > self._max_text_chars:
+            raise InputLimitExceededError(
+                limit="max_text_chars",
+                maximum=self._max_text_chars,
+            )
+
         matches: list[_DetectedMatch] = []
         for rule in self._rule_set:
-            raw = rule.find(text)
+            remaining = self._max_matches - len(matches)
+            try:
+                raw = (
+                    rule.find_limited(text, remaining)
+                    if isinstance(rule, RedactionRule)
+                    else rule.find(text)
+                )
+            except InputLimitExceededError as exc:
+                if exc.limit != "max_matches":
+                    raise
+                raise InputLimitExceededError(
+                    limit="max_matches",
+                    maximum=self._max_matches,
+                ) from exc
+            if len(raw) > remaining:
+                raise InputLimitExceededError(
+                    limit="max_matches",
+                    maximum=self._max_matches,
+                )
             for match in raw:
                 _validate_match(match, text, rule.name)
             matches.extend(raw)
@@ -79,7 +115,7 @@ class FindingResolver:
 class TextRedactor:
     """Apply pre-resolved matches to text, producing cleaned text and public Findings.
 
-    Replacements are applied right-to-left to preserve earlier offsets.
+    Output is assembled in one forward pass from the original offsets.
     The rule used for replacement is always the rule that produced the match —
     looked up directly from the RuleSet by name, with no ambiguity.
     """
@@ -107,12 +143,14 @@ class TextRedactor:
             return text, ()
 
         findings: list[Finding] = []
-        cleaned = text
+        parts: list[str] = []
+        cursor = 0
 
-        for match in reversed(resolved_matches):
+        for match in resolved_matches:
             rule = self._rule_set[match.rule_name]
             replacement = rule.replacement_for(match, self._masking)
-            cleaned = f"{cleaned[: match.start]}{replacement}{cleaned[match.end :]}"
+            parts.extend((text[cursor : match.start], replacement))
+            cursor = match.end
             finding = Finding(
                 rule_name=match.rule_name,
                 category=match.category,
@@ -125,7 +163,8 @@ class TextRedactor:
             )
             findings.append(finding)
 
-        return cleaned, tuple(reversed(findings))
+        parts.append(text[cursor:])
+        return "".join(parts), tuple(findings)
 
 
 # ---------------------------------------------------------------------------

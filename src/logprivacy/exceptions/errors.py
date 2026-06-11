@@ -19,6 +19,15 @@ class LogBlockedError(LogPrivacyError):
         self.categories = categories
 
 
+class InputLimitExceededError(LogPrivacyError):
+    """Raised when text sanitization exceeds a configured safety budget."""
+
+    def __init__(self, *, limit: str, maximum: int) -> None:
+        super().__init__(f"LogPrivacy input exceeded {limit} ({maximum})")
+        self.limit = limit
+        self.maximum = maximum
+
+
 class LogPrivacyAssertionError(AssertionError):
     """Raised by assert_clean() when sensitive data is found."""
 

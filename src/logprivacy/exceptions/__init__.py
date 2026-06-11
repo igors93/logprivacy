@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from logprivacy.exceptions.errors import (
+    InputLimitExceededError,
     JSONLProcessingError,
     LogBlockedError,
     LogPrivacyAssertionError,
@@ -13,6 +14,7 @@ from logprivacy.exceptions.errors import (
 )
 
 __all__ = [
+    "InputLimitExceededError",
     "JSONLProcessingError",
     "LogBlockedError",
     "LogPrivacyAssertionError",

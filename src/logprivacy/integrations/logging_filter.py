@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 from logprivacy.cleaner import Cleaner
-from logprivacy.exceptions import LogBlockedError
+from logprivacy.exceptions import InputLimitExceededError, LogBlockedError
 from logprivacy.internal.logging_values import LoggingValueSanitizer
 from logprivacy.internal.rendering import (
     DEFAULT_MAX_RENDER_CHARS,
@@ -33,6 +33,21 @@ def _build_standard_record_attributes() -> frozenset[str]:
 
 
 _STANDARD_RECORD_ATTRIBUTES = _build_standard_record_attributes()
+
+
+def _replace_record_with_marker(record: logging.LogRecord, message: str) -> None:
+    """Replace a rejected record without retaining attacker-controlled values."""
+    record.msg = message
+    record.args = ()
+    record.exc_info = None
+    record.exc_text = None
+    record.stack_info = None
+    record.__dict__.pop("message", None)
+    record.__dict__.pop("asctime", None)
+
+    for key in tuple(record.__dict__):
+        if key not in _STANDARD_RECORD_ATTRIBUTES:
+            record.__dict__[key] = "[REDACTED]"
 
 
 def _sanitize_value(value: object, cleaner: Cleaner) -> object:
@@ -152,7 +167,7 @@ class LogPrivacyFilter(logging.Filter):
     """
 
     cleaner: Cleaner = field(default_factory=Cleaner)
-    drop_blocked: bool = True
+    drop_blocked: bool | None = None
     logger_prefix: str | None = None
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -181,10 +196,23 @@ class LogPrivacyFilter(logging.Filter):
                 )
 
             _sanitize_extra_attributes(record, sanitizer)
-        except LogBlockedError:
-            if self.drop_blocked:
+        except LogBlockedError as exc:
+            if self.drop_blocked is True:
                 return False
-            raise
+            if self.drop_blocked is False:
+                raise
+            categories = ",".join(exc.categories)
+            _replace_record_with_marker(
+                record,
+                f"[LOGPRIVACY BLOCKED categories={categories}]",
+            )
+            return True
+        except InputLimitExceededError as exc:
+            _replace_record_with_marker(
+                record,
+                f"[LOGPRIVACY INPUT LIMIT EXCEEDED limit={exc.limit}]",
+            )
+            return True
 
         return True
 
@@ -210,7 +238,7 @@ def install_handler_filters(
     logger: logging.Logger,
     *,
     cleaner: Cleaner,
-    drop_blocked: bool,
+    drop_blocked: bool | None,
 ) -> None:
     """Protect configured handlers for ``logger`` and all of its child loggers."""
     root_logger = logging.getLogger()

@@ -195,8 +195,9 @@ def get_safe_logger(
     Call this function after configuring logging handlers. Calling it again is
     safe and refreshes handler protection. A second call without an explicit
     ``policy`` reuses the existing cleaner; an explicit policy replaces it.
-    ``drop_blocked=False`` makes production block mode raise ``LogBlockedError``
-    instead of silently dropping the record.
+    By default, blocked records are replaced with a non-sensitive audit marker.
+    ``drop_blocked=True`` preserves the legacy discard behavior, while
+    ``drop_blocked=False`` raises ``LogBlockedError``.
 
     Example::
 
@@ -219,7 +220,7 @@ def get_safe_logger(
 
     if existing is None:
         cleaner = Cleaner(policy=policy or CleanerPolicy.default())
-        effective_drop_blocked = True if drop_blocked is None else drop_blocked
+        effective_drop_blocked = drop_blocked
         existing = LogPrivacyFilter(
             cleaner=cleaner,
             drop_blocked=effective_drop_blocked,

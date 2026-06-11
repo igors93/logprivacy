@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from logprivacy.exceptions import InputLimitExceededError
 from logprivacy.internal.matches import _DetectedMatch
 from logprivacy.masking.strategy import MaskingStrategy
 from logprivacy.masking.value import mask_concrete_value
@@ -46,10 +47,24 @@ class CredentialRule(RedactionRule):
 
     def find(self, text: str) -> tuple[_DetectedMatch, ...]:
         """Return credential assignments as internal matches."""
+        return self._find_matches(text, max_matches=None)
+
+    def find_limited(self, text: str, max_matches: int) -> tuple[_DetectedMatch, ...]:
+        """Return credential assignments without exceeding the match budget."""
+        return self._find_matches(text, max_matches=max_matches)
+
+    def _find_matches(
+        self,
+        text: str,
+        *,
+        max_matches: int | None,
+    ) -> tuple[_DetectedMatch, ...]:
         matches: list[_DetectedMatch] = []
         authorization_ranges: list[tuple[int, int]] = []
 
         for match in _AUTHORIZATION_PATTERN.finditer(text):
+            if max_matches is not None and len(matches) >= max_matches:
+                raise InputLimitExceededError(limit="max_matches", maximum=max_matches)
             scheme = match.group("scheme")
             category = "token" if scheme.casefold() == "bearer" else "credential"
             matches.append(
@@ -76,6 +91,8 @@ class CredentialRule(RedactionRule):
         for match in _CREDENTIAL_PATTERN.finditer(text):
             if _ranges_overlap(match.start(), match.end(), authorization_ranges):
                 continue
+            if max_matches is not None and len(matches) >= max_matches:
+                raise InputLimitExceededError(limit="max_matches", maximum=max_matches)
 
             matches.append(
                 _DetectedMatch(

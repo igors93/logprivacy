@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from logprivacy.exceptions import InputLimitExceededError
 from logprivacy.internal.matches import _DetectedMatch
 from logprivacy.rules.base import RedactionRule
 
@@ -39,18 +40,33 @@ class CreditCardRule(RedactionRule):
 
     def find(self, text: str) -> tuple[_DetectedMatch, ...]:
         """Return credit card matches."""
+        return self._find_matches(text, max_matches=None)
+
+    def find_limited(self, text: str, max_matches: int) -> tuple[_DetectedMatch, ...]:
+        """Return credit card matches without exceeding the match budget."""
+        return self._find_matches(text, max_matches=max_matches)
+
+    def _find_matches(
+        self,
+        text: str,
+        *,
+        max_matches: int | None,
+    ) -> tuple[_DetectedMatch, ...]:
         matches: list[_DetectedMatch] = []
         for match in _CARD_PATTERN.finditer(text):
             digits = _digits(match.group(0))
-            if 13 <= len(digits) <= 19 and _passes_luhn(digits):
-                matches.append(
-                    _DetectedMatch(
-                        rule_name=self.name,
-                        category=self.category,
-                        start=match.start(),
-                        end=match.end(),
-                        matched=match.group(0),
-                        reason="text matched a credit-card-like value that passed Luhn validation",
-                    )
+            if not 13 <= len(digits) <= 19 or not _passes_luhn(digits):
+                continue
+            if max_matches is not None and len(matches) >= max_matches:
+                raise InputLimitExceededError(limit="max_matches", maximum=max_matches)
+            matches.append(
+                _DetectedMatch(
+                    rule_name=self.name,
+                    category=self.category,
+                    start=match.start(),
+                    end=match.end(),
+                    matched=match.group(0),
+                    reason="text matched a credit-card-like value that passed Luhn validation",
                 )
+            )
         return tuple(matches)

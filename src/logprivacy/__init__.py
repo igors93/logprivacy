@@ -23,6 +23,7 @@ from logprivacy.api import (
 from logprivacy.audit import AuditReport
 from logprivacy.cleaner import Cleaner
 from logprivacy.exceptions import (
+    InputLimitExceededError,
     JSONLProcessingError,
     LogBlockedError,
     LogPrivacyAssertionError,
@@ -74,6 +75,7 @@ __all__ = [
     "Finding",
     "HMACMaskingStrategy",
     "HashMaskingStrategy",
+    "InputLimitExceededError",
     "JSONLProcessingError",
     "JSONLRecord",
     "JSONLResult",

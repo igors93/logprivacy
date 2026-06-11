@@ -7,15 +7,23 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 from logprivacy.audit import AuditReport
-from logprivacy.exceptions import LogBlockedError
+from logprivacy.exceptions import InputLimitExceededError, LogBlockedError
 from logprivacy.internal.audit_location import append_mapping_key, append_sequence_index
 from logprivacy.internal.matches import _DetectedMatch
-from logprivacy.internal.pipeline import FindingResolver, TextRedactor, TextScanner
+from logprivacy.internal.pipeline import (
+    DEFAULT_MAX_TEXT_CHARS,
+    FindingResolver,
+    TextRedactor,
+    TextScanner,
+)
 from logprivacy.internal.traversal import (
     LIMIT_ITERATION_ERROR,
     LIMIT_MAX_DEPTH,
+    LIMIT_MAX_FINDINGS,
+    LIMIT_MAX_TEXT_CHARS,
     LIMIT_REPRESENTATION_ERROR,
     MAX_DEPTH_PLACEHOLDER,
+    TRUNCATED_PLACEHOLDER,
     UNAVAILABLE_PLACEHOLDER,
     TraversalState,
     safe_mapping_key_text,
@@ -49,7 +57,14 @@ class Cleaner:
     def __post_init__(self) -> None:
         """Build the text pipeline once and validate the rule set eagerly."""
         rule_set = RuleSet(self.policy.rules)
-        object.__setattr__(self, "_scanner", TextScanner(rule_set))
+        object.__setattr__(
+            self,
+            "_scanner",
+            TextScanner(
+                rule_set,
+                max_text_chars=DEFAULT_MAX_TEXT_CHARS,
+            ),
+        )
         object.__setattr__(self, "_resolver", FindingResolver())
         object.__setattr__(self, "_redactor", TextRedactor(rule_set, self.policy.masking))
         object.__setattr__(
@@ -75,6 +90,11 @@ class Cleaner:
         """Return cleaned text and a ``RedactionResult`` with finding details."""
         raw_matches = self._scanner.scan(text)
         resolved = self._resolver.resolve(raw_matches)
+        if len(resolved) > self.policy.max_findings:
+            raise InputLimitExceededError(
+                limit=LIMIT_MAX_FINDINGS,
+                maximum=self.policy.max_findings,
+            )
         self._raise_if_blocked_matches(resolved)
         cleaned, findings = self._redactor.redact(text, resolved)
         return RedactionResult(original=text, cleaned=cleaned, findings=findings)
@@ -250,8 +270,11 @@ class Cleaner:
             state.active.discard(value_id)
 
     def _sanitize_location_text(self, text: str) -> str:
-        """Redact a safe label without applying block-mode side effects."""
-        raw_matches = self._scanner.scan(text)
+        """Redact a bounded safe label without applying block-mode side effects."""
+        try:
+            raw_matches = self._scanner.scan(text)
+        except InputLimitExceededError:
+            return TRUNCATED_PLACEHOLDER
         resolved = self._resolver.resolve(raw_matches)
         if not resolved:
             return text
@@ -261,7 +284,14 @@ class Cleaner:
     def _bounded_findings(
         self, text: str, state: TraversalState, *, path: str = ""
     ) -> tuple[Finding, ...]:
-        raw_matches = self._scanner.scan(text)
+        try:
+            raw_matches = self._scanner.scan(text)
+        except InputLimitExceededError as exc:
+            limitation = (
+                LIMIT_MAX_TEXT_CHARS if exc.limit == LIMIT_MAX_TEXT_CHARS else LIMIT_MAX_FINDINGS
+            )
+            state.mark_limit(limitation)
+            return ()
         resolved = self._resolver.resolve(raw_matches)
         _, findings = self._redactor.redact(text, resolved)
         if path:

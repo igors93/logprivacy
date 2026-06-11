@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from logprivacy.exceptions import InputLimitExceededError
 from logprivacy.internal.matches import _DetectedMatch
 from logprivacy.masking.strategy import MaskingStrategy
 from logprivacy.masking.value import mask_concrete_value
@@ -13,7 +14,6 @@ _BEARER_PATTERN = re.compile(
     r"(?P<prefix>\bBearer\s+)(?P<value>[A-Za-z0-9._~+/=-]{8,})",
     re.IGNORECASE,
 )
-
 _JWT_PATTERN = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")
 
 
@@ -25,8 +25,22 @@ class TokenRule(RedactionRule):
 
     def find(self, text: str) -> tuple[_DetectedMatch, ...]:
         """Return token matches."""
+        return self._find_matches(text, max_matches=None)
+
+    def find_limited(self, text: str, max_matches: int) -> tuple[_DetectedMatch, ...]:
+        """Return token matches without exceeding the match budget."""
+        return self._find_matches(text, max_matches=max_matches)
+
+    def _find_matches(
+        self,
+        text: str,
+        *,
+        max_matches: int | None,
+    ) -> tuple[_DetectedMatch, ...]:
         matches: list[_DetectedMatch] = []
         for match in _BEARER_PATTERN.finditer(text):
+            if max_matches is not None and len(matches) >= max_matches:
+                raise InputLimitExceededError(limit="max_matches", maximum=max_matches)
             matches.append(
                 _DetectedMatch(
                     rule_name=self.name,
@@ -42,6 +56,8 @@ class TokenRule(RedactionRule):
                 )
             )
         for match in _JWT_PATTERN.finditer(text):
+            if max_matches is not None and len(matches) >= max_matches:
+                raise InputLimitExceededError(limit="max_matches", maximum=max_matches)
             matches.append(
                 _DetectedMatch(
                     rule_name=self.name,
