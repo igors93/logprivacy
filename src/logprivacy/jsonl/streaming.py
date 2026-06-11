@@ -26,6 +26,9 @@ from logprivacy.safe_data import to_safe_data_with_result
 
 _OnError = Literal["raise", "skip", "placeholder"]
 _SourceType = Path | str | TextIO
+_OutputPath = Path | str
+
+_LIMIT_INVALID_JSON = "invalid_json"
 
 
 def safe_jsonl_write(
@@ -80,15 +83,14 @@ def iter_safe_jsonl(
                     raise JSONLProcessingError(
                         f"invalid JSON at line {line_number}",
                         line_number=line_number,
-                        reason="invalid_json",
+                        reason=_LIMIT_INVALID_JSON,
                     ) from exc
                 if on_error == "skip":
                     continue
-                # placeholder
                 placeholder_result = SafeDataResult(
-                    cleaned={"_logprivacy_error": "invalid_json", "_line": line_number},
+                    cleaned={"_logprivacy_error": _LIMIT_INVALID_JSON, "_line": line_number},
                     complete=False,
-                    limitations=("invalid_json",),
+                    limitations=(_LIMIT_INVALID_JSON,),
                     stats=SafeDataStats(),
                 )
                 yield JSONLRecord(line_number=line_number, result=placeholder_result)
@@ -101,7 +103,7 @@ def iter_safe_jsonl(
 def clean_jsonl(
     source: _SourceType,
     *,
-    output: _SourceType,
+    output: _OutputPath,
     policy: CleanerPolicy | None = None,
     adapters: AdapterRegistry | None = None,
     on_error: _OnError = "raise",
@@ -114,6 +116,11 @@ def clean_jsonl(
 
     When ``source`` and ``output`` resolve to the same file, in-place cleaning
     is performed safely via an intermediate temp file in the same directory.
+
+    Skipped or placeholder lines are intentional recovery behaviors, but they
+    mean the source was not fully processed as valid JSON. In both cases the
+    returned result has ``complete=False`` and includes ``"invalid_json"`` in
+    ``limitations``.
     """
     _validate_on_error(on_error)
     output_path = _require_path(output, "output")
@@ -147,15 +154,18 @@ def clean_jsonl(
                         raise JSONLProcessingError(
                             f"invalid JSON at line {line_number}",
                             line_number=line_number,
-                            reason="invalid_json",
+                            reason=_LIMIT_INVALID_JSON,
                         ) from exc
+
+                    all_complete = False
+                    _append_unique(all_limitations, _LIMIT_INVALID_JSON)
+
                     if on_error == "skip":
                         skipped_lines += 1
-                        all_complete = False
                         continue
-                    # placeholder
+
                     placeholder = {
-                        "_logprivacy_error": "invalid_json",
+                        "_logprivacy_error": _LIMIT_INVALID_JSON,
                         "_line": line_number,
                     }
                     tmp_stream.write(_json.dumps(placeholder, allow_nan=False))
@@ -170,11 +180,9 @@ def clean_jsonl(
                 lines_written += 1
                 if not result.complete:
                     all_complete = False
-                for lim in result.limitations:
-                    if lim not in all_limitations:
-                        all_limitations.append(lim)
+                for limitation in result.limitations:
+                    _append_unique(all_limitations, limitation)
 
-        # Preserve permissions when possible
         try:
             existing_mode = output_path.stat().st_mode
             os.chmod(tmp_path, existing_mode)
@@ -213,8 +221,10 @@ def scan_jsonl(
     Yields ``JSONLScanRecord`` for lines that contain findings.
     Lines with no findings are not yielded.
 
-    Invalid JSON is handled via ``on_error`` (same semantics as ``iter_safe_jsonl``).
-    The original line content is never stored or included in errors.
+    ``"raise"`` raises for invalid JSON. Because scan records only represent
+    findings, ``"skip"`` and ``"placeholder"`` both omit invalid lines instead
+    of yielding a synthetic scan finding. The original line content is never
+    stored or included in errors.
     """
     _validate_on_error(on_error)
     effective_policy = CleanerPolicy.default() if policy is None else policy
@@ -232,9 +242,8 @@ def scan_jsonl(
                     raise JSONLProcessingError(
                         f"invalid JSON at line {line_number}",
                         line_number=line_number,
-                        reason="invalid_json",
+                        reason=_LIMIT_INVALID_JSON,
                     ) from exc
-                # skip or placeholder: just skip for scan
                 continue
 
             report = cleaner.audit(parsed)
@@ -242,17 +251,12 @@ def scan_jsonl(
                 yield JSONLScanRecord(line_number=line_number, findings=report.findings)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _validate_on_error(on_error: str) -> None:
     if on_error not in ("raise", "skip", "placeholder"):
         raise ValueError(f"on_error must be 'raise', 'skip', or 'placeholder'; got {on_error!r}")
 
 
-def _require_path(source: _SourceType, name: str) -> Path:
+def _require_path(source: _OutputPath, name: str) -> Path:
     if isinstance(source, (str, Path)):
         return Path(source)
     raise TypeError(f"{name} must be a file path (str or Path) for atomic write")
@@ -281,3 +285,9 @@ class _NullContextManager:
 def _iter_lines(stream: IO[str]) -> Iterator[tuple[int, str]]:
     """Yield (1-based line_number, line_text) pairs."""
     yield from enumerate(stream, start=1)
+
+
+def _append_unique(values: list[str], value: str) -> None:
+    """Append ``value`` once while preserving first-seen order."""
+    if value not in values:
+        values.append(value)
