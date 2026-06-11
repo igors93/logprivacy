@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import re
 from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import TYPE_CHECKING, Protocol
@@ -166,3 +167,61 @@ def _build_hash_payload(category: str, value: str, *, salt: str) -> bytes:
 def _frame(value: bytes) -> bytes:
     """Prefix one binary component with its fixed-width length."""
     return len(value).to_bytes(8, byteorder="big") + value
+
+
+_HMAC_SAFE_CATEGORY_PATTERN = re.compile(r"[^A-Za-z0-9_]+")
+_MIN_HMAC_DIGEST_SIZE = 8
+_MAX_HMAC_DIGEST_SIZE = 64  # sha256 hex length
+
+
+@dataclass(frozen=True, slots=True)
+class HMACMaskingStrategy:
+    """Deterministic pseudonymization using HMAC-SHA256.
+
+    Produces correlation tokens in the form ``[CATEGORY:hmac:hexdigest]``.
+    The same key + value + category always produces the same token; rotate
+    the key to invalidate all tokens.
+
+    This is pseudonymization, not anonymization. A party with the key can
+    re-derive any token from the original value.
+
+    Security:
+    - ``key`` never appears in ``repr``, ``str``, exceptions, or serialization.
+    - ``key`` must be bytes (no implicit string coercion).
+    - Empty keys are rejected.
+    - ``digest_size`` is the number of hexadecimal characters in the output.
+    """
+
+    key: bytes = field(repr=False)
+    digest_size: int = 12
+
+    def __post_init__(self) -> None:
+        if isinstance(self.key, bool) or not isinstance(self.key, bytes):
+            raise TypeError("HMACMaskingStrategy key must be bytes")
+        if not self.key:
+            raise ValueError("HMACMaskingStrategy key must not be empty")
+        if isinstance(self.digest_size, bool) or not isinstance(self.digest_size, int):
+            raise TypeError("digest_size must be an integer")
+        if not (_MIN_HMAC_DIGEST_SIZE <= self.digest_size <= _MAX_HMAC_DIGEST_SIZE):
+            raise ValueError(
+                f"digest_size must be between {_MIN_HMAC_DIGEST_SIZE} and {_MAX_HMAC_DIGEST_SIZE}"
+            )
+
+    def mask(self, finding: Finding) -> str:
+        """Return a pseudonymous correlation token for the finding."""
+        return self.mask_value(finding.matched, finding.category)
+
+    def mask_value(self, value: str, category: str) -> str:
+        """Return a pseudonymous correlation token for value and category."""
+        message = category.encode("utf-8") + b" " + value.encode("utf-8")
+        digest = hmac.new(self.key, message, sha256).hexdigest()
+        label = _HMAC_SAFE_CATEGORY_PATTERN.sub("_", category).upper() or "REDACTED"
+        return f"[{label}:hmac:{digest[: self.digest_size]}]"
+
+    def mask_category(self, category: str) -> str:
+        """Return a safe placeholder when no concrete value is available."""
+        label = _HMAC_SAFE_CATEGORY_PATTERN.sub("_", category).upper() or "REDACTED"
+        return f"[{label}:hmac:?]"
+
+    def __str__(self) -> str:
+        return f"HMACMaskingStrategy(digest_size={self.digest_size})"

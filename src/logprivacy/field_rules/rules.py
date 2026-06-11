@@ -7,10 +7,10 @@ from dataclasses import dataclass, field
 from re import Pattern
 from typing import Literal, TypeAlias
 
-FieldAction: TypeAlias = Literal["mask", "remove", "truncate", "block"]
+FieldAction: TypeAlias = Literal["mask", "remove", "truncate", "block", "pseudonymize"]
 FieldMatchMode: TypeAlias = Literal["exact", "contains", "regex"]
 
-_VALID_ACTIONS = frozenset({"mask", "remove", "truncate", "block"})
+_VALID_ACTIONS = frozenset({"mask", "remove", "truncate", "block", "pseudonymize"})
 _VALID_MATCH_MODES = frozenset({"exact", "contains", "regex"})
 
 
@@ -22,6 +22,7 @@ class FieldRule:
     action: FieldAction = "mask"
     mode: FieldMatchMode = "exact"
     max_chars: int | None = None
+    category: str = ""
     _compiled: Pattern[str] | None = field(default=None, init=False, repr=False, compare=False)
     _normalized_match: str = field(default="", init=False, repr=False, compare=False)
 
@@ -29,7 +30,9 @@ class FieldRule:
         if not isinstance(self.match, str) or not self.match.strip():
             raise ValueError("field rule match must be a non-empty string")
         if self.action not in _VALID_ACTIONS:
-            raise ValueError("field rule action must be one of: mask, remove, truncate, block")
+            raise ValueError(
+                "field rule action must be one of: mask, remove, truncate, block, pseudonymize"
+            )
         if self.mode not in _VALID_MATCH_MODES:
             raise ValueError("field rule mode must be one of: exact, contains, regex")
         if self.action == "truncate":
@@ -64,9 +67,10 @@ class FieldRule:
         *,
         action: FieldAction = "mask",
         max_chars: int | None = None,
+        category: str = "",
     ) -> FieldRule:
         """Create a rule that matches a normalized field name exactly."""
-        return cls(match=match, action=action, mode="exact", max_chars=max_chars)
+        return cls(match=match, action=action, mode="exact", max_chars=max_chars, category=category)
 
     @classmethod
     def contains(
@@ -75,9 +79,12 @@ class FieldRule:
         *,
         action: FieldAction = "mask",
         max_chars: int | None = None,
+        category: str = "",
     ) -> FieldRule:
         """Create a rule that matches a normalized field-name substring."""
-        return cls(match=match, action=action, mode="contains", max_chars=max_chars)
+        return cls(
+            match=match, action=action, mode="contains", max_chars=max_chars, category=category
+        )
 
     @classmethod
     def regex(
@@ -86,9 +93,10 @@ class FieldRule:
         *,
         action: FieldAction = "mask",
         max_chars: int | None = None,
+        category: str = "",
     ) -> FieldRule:
         """Create a rule that matches the normalized field name with regex."""
-        return cls(match=match, action=action, mode="regex", max_chars=max_chars)
+        return cls(match=match, action=action, mode="regex", max_chars=max_chars, category=category)
 
     def matches(self, field_name: str) -> bool:
         """Return whether this rule matches ``field_name`` after normalization."""

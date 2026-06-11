@@ -23,6 +23,9 @@ class SafeDataStats:
     unsupported: int = 0
     adapter_errors: int = 0
     field_rule_matches: int = 0
+    path_rule_matches: int = 0
+    not_allowed: int = 0
+    pseudonymized: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,3 +241,39 @@ class RedactionResult(Generic[T]):
                 ]
             )
         return "\n".join(lines).rstrip()
+
+
+@dataclass(frozen=True, slots=True)
+class JSONLStats:
+    """Aggregate counters from a JSONL processing operation."""
+
+    lines_read: int = 0
+    lines_written: int = 0
+    invalid_lines: int = 0
+    skipped_lines: int = 0
+    placeholder_lines: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class JSONLResult:
+    """Full result of a JSONL processing operation."""
+
+    complete: bool
+    limitations: tuple[str, ...]
+    stats: JSONLStats
+
+
+@dataclass(frozen=True, slots=True)
+class JSONLRecord:
+    """Per-line result from ``iter_safe_jsonl()``."""
+
+    line_number: int
+    result: SafeDataResult
+
+
+@dataclass(frozen=True, slots=True)
+class JSONLScanRecord:
+    """Per-line scan result from ``scan_jsonl()``."""
+
+    line_number: int
+    findings: tuple[Finding, ...]

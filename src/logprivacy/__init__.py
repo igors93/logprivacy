@@ -23,22 +23,37 @@ from logprivacy.api import (
 from logprivacy.audit import AuditReport
 from logprivacy.cleaner import Cleaner
 from logprivacy.exceptions import (
+    JSONLProcessingError,
     LogBlockedError,
     LogPrivacyAssertionError,
     LogPrivacyError,
+    PolicyConfigurationError,
+    PseudonymizationConfigurationError,
     RuleValidationError,
 )
 from logprivacy.field_rules import FieldAction, FieldRule
 from logprivacy.integrations.logging_filter import LogPrivacyFilter
 from logprivacy.integrations.logging_formatter import LogPrivacyFormatter
 from logprivacy.json import safe_json_dump, safe_json_dumps
+from logprivacy.jsonl import clean_jsonl, iter_safe_jsonl, safe_jsonl_write, scan_jsonl
 from logprivacy.masking.strategy import (
     HashMaskingStrategy,
+    HMACMaskingStrategy,
     PartialMaskingStrategy,
     PlaceholderMaskingStrategy,
 )
+from logprivacy.path_rules import PathAction, PathRule
 from logprivacy.policy import CleanerPolicy
-from logprivacy.result import Finding, RedactionResult, SafeDataResult, SafeDataStats
+from logprivacy.result import (
+    Finding,
+    JSONLRecord,
+    JSONLResult,
+    JSONLScanRecord,
+    JSONLStats,
+    RedactionResult,
+    SafeDataResult,
+    SafeDataStats,
+)
 from logprivacy.rules.custom import CustomRegexRule
 from logprivacy.rules.email import EmailRule
 from logprivacy.rules.secret import SecretRule
@@ -57,7 +72,13 @@ __all__ = [
     "FieldAction",
     "FieldRule",
     "Finding",
+    "HMACMaskingStrategy",
     "HashMaskingStrategy",
+    "JSONLProcessingError",
+    "JSONLRecord",
+    "JSONLResult",
+    "JSONLScanRecord",
+    "JSONLStats",
     "JSONScalar",
     "JSONValue",
     "LogBlockedError",
@@ -66,7 +87,11 @@ __all__ = [
     "LogPrivacyFilter",
     "LogPrivacyFormatter",
     "PartialMaskingStrategy",
+    "PathAction",
+    "PathRule",
     "PlaceholderMaskingStrategy",
+    "PolicyConfigurationError",
+    "PseudonymizationConfigurationError",
     "RedactionResult",
     "RuleValidationError",
     "SafeDataResult",
@@ -78,17 +103,21 @@ __all__ = [
     "audit",
     "clean",
     "clean_file",
+    "clean_jsonl",
     "clean_text",
     "clean_url",
     "clean_with_result",
     "explain",
     "get_safe_logger",
+    "iter_safe_jsonl",
+    "safe_jsonl_write",
     "safe_print",
     "safe_json_dump",
     "safe_json_dumps",
     "scan_file",
+    "scan_jsonl",
     "to_safe_data",
     "to_safe_data_with_result",
 ]
 
-__version__ = "0.5.2"
+__version__ = "0.5.3"

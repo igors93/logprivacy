@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.5.3 - Unreleased
+
+### Added
+
+- `PathRule` — path-based privacy rules matching full traversal paths such as
+  `"account.balance"` or `"orders.*.order_id"` (exact and glob modes). Takes
+  precedence over `FieldRule`, `sensitive_keys`, and the allowlist.
+- `HMACMaskingStrategy` — deterministic pseudonymization via HMAC-SHA256.
+  Key must be `bytes`; it is never stored in `repr`, exceptions, or
+  serialization. Token format: `[CATEGORY:hmac:hexdigest]`.
+- `pseudonymize` action for `FieldRule` and `PathRule`; requires
+  `policy.with_pseudonymizer(HMACMaskingStrategy(key=...))`.
+- `CleanerPolicy.allow_paths(*paths)` — opt-in allowlist: any field whose path
+  is not covered (directly or as a parent) is removed. Parent nodes leading to
+  allowed fields are preserved. Values of allowed fields are still sanitized.
+- `CleanerPolicy.add_path_rules()`, `with_path_rules()`, `with_pseudonymizer()`.
+- `CleanerPolicy.from_dict()`, `to_dict()`, `from_json()`, `to_json()` for
+  schema-version-1 declarative policies. Keys for HMAC are never serialized.
+- JSONL streaming: `safe_jsonl_write()`, `iter_safe_jsonl()`, `clean_jsonl()`,
+  `scan_jsonl()`. `clean_jsonl` writes atomically via a temp file and
+  `os.replace`; the original file is never partially overwritten on failure.
+- `JSONLRecord`, `JSONLResult`, `JSONLStats`, `JSONLScanRecord` result types.
+- `PolicyConfigurationError`, `JSONLProcessingError`,
+  `PseudonymizationConfigurationError` error types.
+- `SafeDataStats` fields: `path_rule_matches`, `not_allowed`, `pseudonymized`.
+
+### Changed
+
+- Allowlist removal (`not_allowed`) does NOT set `complete=False`; it is an
+  intentional policy decision, not a traversal failure.
+- Structured traversal precedence is now explicit:
+  `block` → `PathRule` → `FieldRule` → `sensitive_keys` → `allowlist` →
+  `text sanitization`.
+
+### Security
+
+- HMAC key is excluded from `repr`, `str`, `to_dict`, and `to_json`.
+- `clean_jsonl` uses atomic rename; a failed write leaves the original intact.
+- Allowlist defaults to inactive — adding one is an explicit opt-in.
+
 ## 0.5.2 - Unreleased
 
 ### Fixed

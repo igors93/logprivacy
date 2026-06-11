@@ -157,25 +157,78 @@ underscores are treated as the same separator.
 Explicit field rules are evaluated in declaration order. If no field rule
 matches, legacy `sensitive_keys` masking is applied.
 
+## Path Rules
+
+`PathRule` matches the full traversal path, not just the field name. This lets
+you target a field in a specific context:
+
+```python
+from logprivacy import CleanerPolicy, PathRule, to_safe_data
+
+# "balance" inside "account" → remove; "balance" elsewhere → untouched
+policy = CleanerPolicy.default().add_path_rules(
+    PathRule.exact("account.balance", action="remove"),
+)
+
+to_safe_data(
+    {"strategy": {"balance": 1000}, "account": {"balance": 25000}},
+    policy=policy,
+)
+# {"strategy": {"balance": 1000}, "account": {"balance": "[REMOVED]"}}
+```
+
+Use `PathRule.glob` with a `*` wildcard to match any single segment:
+
+```python
+policy = CleanerPolicy.default().add_path_rules(
+    PathRule.glob("orders.*.order_id", action="mask"),
+)
+```
+
+**Precedence:** `PathRule` takes priority over `FieldRule`, `sensitive_keys`,
+and the allowlist. The full precedence order is:
+`block` → `PathRule` → `FieldRule` → `sensitive_keys` → `allowlist` →
+`text sanitization`.
+
+**Supported actions:** `mask`, `remove`, `truncate`, `block`, `pseudonymize`.
+
+### Path Syntax
+
+- Segments are separated by `.`.
+- `*` matches exactly one segment in glob mode (not allowed in exact mode).
+- `**` and partial wildcards (`q*`, `*.json`) are not supported.
+- Empty segments, leading/trailing dots, and double dots are rejected.
+
+```python
+PathRule.exact("account.balance")         # exact two-segment path
+PathRule.glob("orders.*.quantity")        # any order's quantity field
+PathRule.glob("events.*.metadata.token")  # deeper nesting
+```
+
+Field name segments use the same normalization as `FieldRule`: camelCase is
+split, separators are unified, case is folded. List indices match as their
+string representation (`"0"`, `"1"`), or via `*` in glob mode.
+
 ## Actions
 
-Field rules support four actions:
+Both `FieldRule` and `PathRule` support these actions:
 
 - `mask`: replace the value using the policy masking strategy;
-- `remove`: keep the field but replace the value with `[REMOVED]`;
+- `remove`: replace the value with `[REMOVED]` (key is kept);
 - `truncate`: sanitize the **full** text first, then cut to `max_chars` and
-  append `[TRUNCATED]` if needed. This order ensures secrets that fall after
-  the cut point are never exposed in the output.
+  append `[TRUNCATED]` if needed. This order ensures secrets after the cut
+  point are never exposed.
 - `block`: raise `LogBlockedError` without including the blocked value.
+- `pseudonymize`: replace the value with a deterministic HMAC token (requires
+  `policy.with_pseudonymizer(HMACMaskingStrategy(key=...))`).
 
 `truncate` is limited to textual values (`str`, `bytes`, `bytearray`, and
-`memoryview`). Non-text values become `[TRUNCATED]` without sanitization
-(there is no text content to redact).
+`memoryview`). Non-text values become `[TRUNCATED]`.
 
 ### Field Rules on Exceptions
 
-Field rules apply to the `type` and `message` fields produced when an exception
-is sanitized, giving the same protection as mappings and dataclasses:
+Field rules (and path rules) apply to the `type` and `message` fields produced
+when an exception is sanitized:
 
 ```python
 from logprivacy import CleanerPolicy, FieldRule, to_safe_data
@@ -187,6 +240,67 @@ policy = CleanerPolicy.default().add_field_rules(
 to_safe_data(ValueError("secret token: abc123"), policy=policy)
 # {"type": "ValueError", "message": "[REMOVED]"}
 ```
+
+## Pseudonymization
+
+`HMACMaskingStrategy` replaces identifiers with deterministic correlation
+tokens. The same key + value + category always produces the same token; rotate
+the key to invalidate all existing tokens.
+
+**This is pseudonymization, not anonymization.** A party with the key can
+re-derive any token from the original value.
+
+```python
+from logprivacy import CleanerPolicy, HMACMaskingStrategy, PathRule, to_safe_data
+
+key = b"your-secret-key-at-least-16-bytes"
+policy = (
+    CleanerPolicy.default()
+    .add_path_rules(PathRule.glob("orders.*.order_id", action="pseudonymize", category="order_id"))
+    .with_pseudonymizer(HMACMaskingStrategy(key=key))
+)
+
+to_safe_data({"orders": [{"order_id": "ORD-1234", "amount": 99.0}]}, policy=policy)
+# {"orders": [{"order_id": "[ORDER_ID:hmac:a3b2c1d4e5f6]", "amount": 99.0}]}
+```
+
+The HMAC key never appears in `repr`, `str`, exceptions, `to_dict`, or `to_json`.
+
+## Allowlist
+
+When an allowlist is configured, any field whose path is not in the allowlist
+(and does not lead to an allowed field) is removed from the output. Values of
+allowed fields are still sanitized.
+
+```python
+from logprivacy import CleanerPolicy, to_safe_data
+
+policy = CleanerPolicy.default().allow_paths(
+    "event_type",
+    "timestamp",
+    "error.type",  # "error" parent is preserved automatically
+)
+
+to_safe_data(
+    {"event_type": "login", "timestamp": "2026-01-01", "error": {"type": "ValueError", "message": "secret"}},
+    policy=policy,
+)
+# {"event_type": "login", "timestamp": "2026-01-01", "error": {"type": "ValueError"}}
+```
+
+The allowlist supports `*` wildcards for single-segment matching:
+
+```python
+policy = CleanerPolicy.default().allow_paths("orders.*.status")
+```
+
+**Precedence:** PathRule and FieldRule actions still apply to allowed fields.
+A `block` PathRule or FieldRule on an allowed field raises `LogBlockedError`.
+Allowlist removal does **not** set `result.complete = False`; it is an
+intentional policy decision, not a traversal failure.
+
+The `stats.not_allowed` counter tracks how many fields were removed by the
+allowlist.
 
 ## Rich Output with SafeDataResult
 
@@ -224,6 +338,9 @@ log_event(result.cleaned)
 | `unsupported` | values replaced with `[UNSUPPORTED:TypeName]` |
 | `adapter_errors` | converters that raised, returned self, or had `__instancecheck__` raise during resolution |
 | `field_rule_matches` | total `FieldRule` matches across all fields |
+| `path_rule_matches` | total `PathRule` matches across all fields |
+| `not_allowed` | fields removed by the allowlist |
+| `pseudonymized` | fields pseudonymized with `HMACMaskingStrategy` |
 
 Both `SafeDataResult` and `SafeDataStats` are frozen dataclasses. Neither retains
 any reference to the original value or raw converter output.
@@ -272,8 +389,72 @@ safe_json_dumps(event, policy=policy)
 # '{"job_id": "job-42", "raw_payload": "password=[SECRET] status=failed", ...}'
 ```
 
+## Safe JSONL
+
+Process JSON Lines files without loading the whole file into memory:
+
+```python
+from pathlib import Path
+from logprivacy.jsonl import safe_jsonl_write, iter_safe_jsonl, clean_jsonl, scan_jsonl
+
+# Write one sanitized record
+with open("out.jsonl", "w") as f:
+    safe_jsonl_write({"email": "user@example.com", "action": "login"}, f)
+
+# Read and sanitize a JSONL file line by line
+for record in iter_safe_jsonl(Path("events.jsonl"), on_error="skip"):
+    print(record.line_number, record.result.cleaned)
+
+# Clean a JSONL file atomically (temp file → os.replace)
+result = clean_jsonl(Path("raw.jsonl"), output=Path("clean.jsonl"))
+print(result.stats.lines_written)
+
+# Scan for sensitive data without modifying
+for scan_record in scan_jsonl(Path("events.jsonl")):
+    print(scan_record.line_number, scan_record.findings)
+```
+
+`on_error` controls how invalid JSON lines are handled:
+- `"raise"` — raise `JSONLProcessingError` (never includes the raw line);
+- `"skip"` — silently omit the bad line;
+- `"placeholder"` — emit `{"_logprivacy_error": "invalid_json", "_line": N}`.
+
+`clean_jsonl` writes atomically: a temp file is created in the same directory,
+then `os.replace` performs an atomic rename. If any step fails, the temp file
+is removed and the original is untouched.
+
+## Declarative Policies
+
+Policies can be serialized to and from JSON for configuration files or sharing
+across services:
+
+```python
+from logprivacy import CleanerPolicy
+
+policy = CleanerPolicy.from_json("""
+{
+  "schema_version": 1,
+  "base": "strict",
+  "field_rules": [{"match": "password", "mode": "exact", "action": "mask"}],
+  "path_rules": [{"path": "account.balance", "mode": "exact", "action": "remove"}],
+  "allowlist": {"paths": ["timestamp", "event_type"]}
+}
+""")
+
+# Export back
+config_json = policy.to_json(sort_keys=True)
+```
+
+HMAC keys are **never** serialized. A policy that uses `pseudonymize` records
+only the action and category; the key must be injected separately via
+`policy.with_pseudonymizer(HMACMaskingStrategy(key=...))`.
+
+Schema version 1 supports: `base`, `field_rules`, `path_rules`, `allowlist`.
+Unknown fields, unknown bases, unknown actions, and unknown modes are rejected
+with a `PolicyConfigurationError`.
+
 ## Limitations
 
-This phase does not implement JSONPath rules, JSONL helpers, Pydantic, attrs,
-Structlog, Loguru, OpenTelemetry, rule packs, or framework-specific behavior.
-Adapters are explicit and local to the registry you pass.
+Not implemented: JSONPath, `**` wildcards, YAML, Pydantic, attrs, Structlog,
+Loguru, OpenTelemetry, plugins, or domain-specific rule packs. Adapters are
+explicit and local to the registry you pass.

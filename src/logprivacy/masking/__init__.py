@@ -11,6 +11,7 @@ from logprivacy.masking.placeholders import (
 )
 from logprivacy.masking.strategy import (
     HashMaskingStrategy,
+    HMACMaskingStrategy,
     MaskingStrategy,
     PartialMaskingStrategy,
     PlaceholderMaskingStrategy,
@@ -19,6 +20,7 @@ from logprivacy.masking.strategy import (
 __all__ = [
     "DEFAULT_PLACEHOLDERS",
     "EMAIL_PLACEHOLDER",
+    "HMACMaskingStrategy",
     "HashMaskingStrategy",
     "IP_ADDRESS_PLACEHOLDER",
     "MaskingStrategy",
