@@ -73,8 +73,6 @@ def _sanitize_message(record: logging.LogRecord, sanitizer: LoggingValueSanitize
     cleaned = sanitizer.cleaner.clean_text(rendered)
     record.msg = sanitize_output_text(
         cleaned,
-        allow_newline=True,
-        allow_tab=True,
         max_chars=DEFAULT_MAX_RENDER_CHARS,
     )
     # Formatters must never interpolate the original values a second time.

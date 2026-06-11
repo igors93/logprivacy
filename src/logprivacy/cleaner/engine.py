@@ -336,6 +336,15 @@ class Cleaner:
         if isinstance(value, str):
             return self.clean_text(value)
 
+        if value_type in _EXACT_BYTE_TYPES:
+            decoded = bytes(value).decode("utf-8", errors="replace")
+            cleaned = self.clean_text(decoded).encode("utf-8")
+            if value_type is bytes:
+                return cleaned
+            if value_type is bytearray:
+                return bytearray(cleaned)
+            return memoryview(cleaned)
+
         if isinstance(value, Mapping):
             return clean_mapping(value, self, depth, state)
 
