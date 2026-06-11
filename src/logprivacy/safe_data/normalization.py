@@ -649,20 +649,9 @@ class _SafeDataNormalizer:
                 category=blocking_field_rule.category,
             )
 
-        path_rule = next((rule for rule in path_rules if rule.action != "block"), None)
-        if path_rule is not None:
-            counters.path_rule_matches += 1
-            return self._apply_action(
-                path_rule.action,
-                value,
-                depth=depth,
-                state=state,
-                counters=counters,
-                path=path,
-                max_chars=path_rule.max_chars,
-                category=path_rule.category,
-            )
-
+        # The allowlist is an output boundary. After blocking rules have had a
+        # chance to stop the operation, a path that is not allowed must not be
+        # reintroduced by a mask, truncate, remove, or pseudonymize rule.
         allowlist_match: _AllowlistPathMatch = "exact"
         if self._allowlist_active:
             allowlist_match = self._allowlist.match_path(path)
@@ -672,6 +661,25 @@ class _SafeDataNormalizer:
             if allowlist_match == "prefix" and _is_definitely_scalar(value):
                 counters.not_allowed += 1
                 return _OMIT
+
+        path_rule = next((rule for rule in path_rules if rule.action != "block"), None)
+        if path_rule is not None:
+            counters.path_rule_matches += 1
+            processed = self._apply_action(
+                path_rule.action,
+                value,
+                depth=depth,
+                state=state,
+                counters=counters,
+                path=path,
+                max_chars=path_rule.max_chars,
+                category=path_rule.category,
+            )
+            return self._omit_non_container_prefix_result(
+                processed,
+                allowlist_match=allowlist_match,
+                counters=counters,
+            )
 
         if field_name is not None:
             field_rule = next((rule for rule in field_rules if rule.action != "block"), None)
