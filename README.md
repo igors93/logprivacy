@@ -65,7 +65,7 @@ pip install logprivacy
 | Sanitize a URL while keeping safe query params | `clean_url()` |
 | Scan or clean an old log file | `scan_file()` / `clean_file()` |
 
-See [docs/which-api.md](docs/which-api.md) for a longer guide.
+See [docs/guides/which-api.md](docs/guides/which-api.md) for a longer guide.
 
 ## Quick start
 
@@ -140,6 +140,46 @@ print(clean(payload))
 # {"email": "[EMAIL]", "password": "[SECRET]", "status": "failed"}
 ```
 
+## Structured and JSON-safe data
+
+Use `to_safe_data()` when the output must be safe to pass to JSON encoders.
+It returns only JSON-safe values, converts supported Python types recursively,
+and fails closed for unsupported objects.
+
+```python
+from logprivacy import (
+    AdapterRegistry,
+    CleanerPolicy,
+    FieldRule,
+    safe_json_dumps,
+    to_safe_data,
+)
+
+to_safe_data({"email": "john@example.com", "password": "123"})
+# {"email": "[EMAIL]", "password": "[SECRET]"}
+
+safe_json_dumps({"token": "abc123456789"})
+# '{"token": "[SECRET]"}'
+
+class Request:
+    def __init__(self, identifier: str, token: str) -> None:
+        self.identifier = identifier
+        self.token = token
+
+adapters = AdapterRegistry.default()
+adapters.register(Request, lambda value: {"id": value.identifier, "token": value.token})
+to_safe_data(Request("req-1", "abc123456789"), adapters=adapters)
+# {"id": "req-1", "token": "[SECRET]"}
+
+policy = CleanerPolicy.default().add_field_rules(
+    FieldRule.exact("raw_body", action="truncate", max_chars=500),
+    FieldRule.contains("secret", action="remove"),
+)
+```
+
+See [docs/data/structured-data.md](docs/data/structured-data.md) for supported types,
+field-rule actions, adapters, and JSON serialization details.
+
 ## Clean URLs without losing useful context
 
 ```python
@@ -174,7 +214,7 @@ Cleaner(CleanerPolicy.default(masking="hash"))         # [EMAIL:855f96e9]
 | `CleanerPolicy.web()` | URLs, credentials, tokens, secrets | HTTP access log cleaning |
 | `CleanerPolicy.production()` | Strict + raises on high-risk categories | CI / production safety gates |
 
-See [docs/policies.md](docs/policies.md) for details.
+See [docs/core/policies.md](docs/core/policies.md) for details.
 
 ## Clean log files
 
@@ -203,7 +243,7 @@ negatives. You should avoid logging sensitive data in the first place.
 LogPrivacy does not replace secret management, encryption, access control, or
 legal privacy review.
 
-See [docs/security-model.md](docs/security-model.md) for the full security model.
+See [docs/security/security-model.md](docs/security/security-model.md) for the full security model.
 
 ## Development
 

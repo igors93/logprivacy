@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import Any, TypeAlias
+from typing import TypeAlias
 
 JSONScalar: TypeAlias = str | int | float | bool | None
-JSONValue: TypeAlias = JSONScalar | Mapping[str, Any] | Sequence[Any]
+JSONValue: TypeAlias = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
 SensitiveCategory: TypeAlias = str
 MaskingName: TypeAlias = str

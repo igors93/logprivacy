@@ -4,7 +4,7 @@ This example is not part of the library internals. It uses fictional values,
 creates files only inside a temporary directory, and can be executed directly
 from a source checkout:
 
-    python examples/logprivacy_showcase.py
+    python examples/basics/logprivacy_showcase.py
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIRECTORY = PROJECT_ROOT / "src"
 
 if str(SRC_DIRECTORY) not in sys.path:

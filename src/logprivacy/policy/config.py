@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
+from logprivacy.field_rules import FieldRule
 from logprivacy.internal.traversal import safe_mapping_key_text
 from logprivacy.masking.strategy import (
     HashMaskingStrategy,
@@ -91,10 +92,12 @@ class CleanerPolicy:
     - how structured data is traversed (``max_depth``, ``max_items``)
     - how many audit findings are retained (``max_findings``)
     - which mapping keys are treated as sensitive (``sensitive_keys``)
+    - which structured field rules are active (``field_rules``)
     - which categories raise an exception instead of being redacted (``block_categories``)
 
     Use the factory class methods to get a sensible starting point, then compose
-    further with ``add_rules()``, ``with_masking()``, or ``block()``.
+    further with ``add_rules()``, ``add_field_rules()``, ``with_masking()``, or
+    ``block()``.
 
     Example::
 
@@ -114,6 +117,7 @@ class CleanerPolicy:
     rules: tuple[RedactionRule, ...] = field(default_factory=_default_rules_sentinel)
     masking: MaskingStrategy = field(default_factory=PlaceholderMaskingStrategy)
     sensitive_keys: tuple[str, ...] = _DEFAULT_SENSITIVE_KEYS
+    field_rules: tuple[FieldRule, ...] = ()
     block_categories: tuple[str, ...] = ()
     clean_mapping_keys: bool = False
     max_depth: int = 20
@@ -126,6 +130,7 @@ class CleanerPolicy:
         _validate_non_negative_integer("max_depth", self.max_depth)
         _validate_positive_integer("max_items", self.max_items)
         _validate_positive_integer("max_findings", self.max_findings)
+        _validate_field_rules(self.field_rules)
 
         # Load default rules only when the sentinel was used (field omitted).
         # An explicit empty tuple keeps rules empty.
@@ -200,6 +205,19 @@ class CleanerPolicy:
         """Return a new policy with another masking strategy."""
         return replace(self, masking=resolve_masking(masking))
 
+    def add_field_rules(self, *rules: FieldRule) -> CleanerPolicy:
+        """Return a new policy with structured field rules appended.
+
+        ``to_safe_data()`` evaluates explicit field rules in declaration order.
+        Legacy ``sensitive_keys`` masking is applied only when no explicit field
+        rule matches a field name.
+        """
+        return replace(self, field_rules=(*self.field_rules, *rules))
+
+    def with_field_rules(self, *rules: FieldRule) -> CleanerPolicy:
+        """Return a new policy using exactly the given structured field rules."""
+        return replace(self, field_rules=tuple(rules))
+
     def block(self, *categories: str) -> CleanerPolicy:
         """Return a new policy that blocks selected categories."""
         return replace(
@@ -241,3 +259,9 @@ def _validate_positive_integer(name: str, value: int) -> None:
         raise TypeError(f"{name} must be an integer")
     if value <= 0:
         raise ValueError(f"{name} must be greater than zero")
+
+
+def _validate_field_rules(rules: tuple[FieldRule, ...]) -> None:
+    for rule in rules:
+        if not isinstance(rule, FieldRule):
+            raise TypeError("field_rules must contain only FieldRule instances")

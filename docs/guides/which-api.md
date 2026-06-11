@@ -145,4 +145,4 @@ from logprivacy import EmailRule
 cleaner = Cleaner(policy=CleanerPolicy.default().with_rules(EmailRule()))
 ```
 
-See [policies.md](policies.md) for a full description of built-in policies.
+See [policies.md](../core/policies.md) for a full description of built-in policies.

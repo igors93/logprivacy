@@ -56,7 +56,7 @@ def test_clean_file_keeps_output_when_atomic_replace_fails(
     def fail_replace(source_path: object, target_path: object) -> None:
         raise OSError("simulated replace failure")
 
-    monkeypatch.setattr("logprivacy.files.os.replace", fail_replace)
+    monkeypatch.setattr("logprivacy.files.operations.os.replace", fail_replace)
 
     with pytest.raises(OSError, match="simulated replace failure"):
         clean_file(source, output=output)

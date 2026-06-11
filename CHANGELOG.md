@@ -27,6 +27,14 @@ All notable changes to this project will be documented in this file.
 - `explain()` for a human-readable breakdown of what would be redacted and why.
 - `RedactionResult` and `Finding` as rich result types with metadata.
 - `LogPrivacyFormatter` as an alternative logging integration.
+- Public `JSONScalar` and `JSONValue` aliases for JSON-safe data.
+- `to_safe_data()` for recursive, fail-closed structured sanitization that
+  returns only JSON-safe values.
+- `AdapterRegistry` for custom type conversion before sanitization.
+- `FieldRule` / `FieldAction` support for structured field masking, removal,
+  truncation, and blocking.
+- `safe_json_dumps()` and `safe_json_dump()` for JSON serialization that always
+  sanitizes before encoding.
 
 ### Changed
 
@@ -41,6 +49,11 @@ All notable changes to this project will be documented in this file.
   without adding a duplicate.
 - `CleanerPolicy` factory docstrings expanded to describe what each policy
   detects and when to use it.
+- Documentation and examples are organized into topical folders instead of
+  flat root-level file lists.
+- Implementation was moved out of large package `__init__.py` files into
+  named modules such as `cleaner/engine.py`, `files/operations.py`, and
+  `safe_data/normalization.py`.
 
 ### Fixed
 
