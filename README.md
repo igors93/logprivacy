@@ -264,11 +264,15 @@ Run all checks:
 Or individually:
 
 ```bash
-python3 -m ruff format .
-python3 -m ruff check . --fix
-python3 -m mypy src
-python3 -m pytest -vv
-python3 -m build
+python -m ruff format .
+python -m ruff check . --fix
+python -m ruff format .
+python -m ruff format --check .
+python -m ruff check .
+python -m mypy src
+python -m pytest -vv
+python -m compileall -q src tests
+python -m build
 ```
 
 ## Design goals

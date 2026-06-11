@@ -27,7 +27,6 @@ from logprivacy.internal.traversal import (
     LIMIT_ADAPTER_ERROR,
     LIMIT_ITERATION_ERROR,
     LIMIT_MAX_DEPTH,
-    LIMIT_MAX_ITEMS,
     LIMIT_RECURSIVE,
     LIMIT_REPRESENTATION_ERROR,
     LIMIT_UNSUPPORTED_TYPE,
@@ -40,7 +39,7 @@ from logprivacy.internal.traversal import (
     safe_mapping_key_text,
 )
 from logprivacy.masking.value import mask_sensitive_value
-from logprivacy.path_rules.allowlist import _AllowlistMatcher
+from logprivacy.path_rules.allowlist import _AllowlistMatcher, _AllowlistPathMatch
 from logprivacy.path_rules.rules import PathRule, _TraversalPath
 from logprivacy.policy import CleanerPolicy
 from logprivacy.result import SafeDataResult, SafeDataStats
@@ -85,34 +84,7 @@ def to_safe_data_with_result(
     policy: CleanerPolicy | None = None,
     adapters: AdapterRegistry | None = None,
 ) -> SafeDataResult:
-    """Return a sanitized value together with completeness, limitations, and stats.
-
-    ``result.cleaned`` is equivalent to what ``to_safe_data()`` returns.
-    ``result.complete`` is ``False`` when any traversal limit was reached or any
-    branch could not be fully inspected.
-    ``result.limitations`` contains stable non-sensitive identifiers for each limit.
-    ``result.stats`` provides aggregate counters (masked, removed, truncated, etc.).
-
-    Limitation identifiers:
-    - ``max_depth`` — nesting exceeded ``policy.max_depth``;
-    - ``max_items`` — ``policy.max_items`` exhausted;
-    - ``iteration_error`` — iteration over a mapping or sequence failed;
-    - ``representation_error`` — ``str()`` or ``getattr`` on a value failed;
-    - ``adapter_error`` — adapter converter raised, returned self, or
-      ``__instancecheck__`` raised during resolution;
-    - ``unsupported_type`` — no handler or adapter for the value type;
-    - ``recursive_value`` — a cycle was detected.
-
-    The result does not retain any reference to the original value, source text,
-    or raw adapter output.
-
-    Example::
-
-        result = to_safe_data_with_result(payload)
-        if not result.complete:
-            logger.warning("partial sanitization: %s", result.limitations)
-        log_event(result.cleaned)
-    """
+    """Return sanitized data together with completeness, limitations, and stats."""
     effective_policy = CleanerPolicy.default() if policy is None else policy
     effective_adapters = AdapterRegistry.default() if adapters is None else adapters.copy()
     normalizer = _SafeDataNormalizer(effective_policy, effective_adapters)
@@ -121,24 +93,7 @@ def to_safe_data_with_result(
 
 @dataclass(slots=True)
 class _NormalizationCounters:
-    """Mutable counters local to one normalization call.
-
-    Counter meanings:
-    - ``masked``: total substitutions — text findings from ``clean_with_result``
-      (each finding is one substitution) plus structural ``mask`` actions and
-      sensitive-key masking (each counted once per field).
-    - ``removed``: fields replaced with ``[REMOVED]`` by a ``remove`` rule.
-    - ``truncated``: fields truncated by a ``truncate`` rule (counted once per
-      field even when the sanitized output also contains findings).
-    - ``unsupported``: values replaced with ``[UNSUPPORTED:TypeName]`` including
-      values that caused an adapter error.
-    - ``adapter_errors``: adapter converters that raised, returned self, or
-      resolution failures caused by ``__instancecheck__`` raising.
-    - ``field_rule_matches``: total ``FieldRule`` matches across all fields.
-    - ``path_rule_matches``: total ``PathRule`` matches across all fields.
-    - ``not_allowed``: fields removed because they were not in the allowlist.
-    - ``pseudonymized``: fields pseudonymized via HMAC strategy.
-    """
+    """Mutable counters local to one normalization call."""
 
     masked: int = 0
     removed: int = 0
@@ -205,9 +160,7 @@ class _SafeDataNormalizer:
 
         value_type = type(value)
 
-        # ---------------------------------------------------------------
-        # Exact primitive types — reserved, never intercepted by adapters.
-        # ---------------------------------------------------------------
+        # Exact primitive types are reserved and never intercepted by adapters.
         if value is None or value_type is bool:
             return cast(JSONValue, value)
         if value_type is int:
@@ -222,47 +175,63 @@ class _SafeDataNormalizer:
                 bytes(cast(Any, value)).decode("utf-8", errors="replace"), counters=counters
             )
 
-        # ---------------------------------------------------------------
-        # Adapter resolution — MUST happen before structural isinstance
-        # checks so registered custom subclasses (e.g. ExternalList(list))
-        # are dispatched to their converter first.
-        # ---------------------------------------------------------------
+        # Resolve custom adapters before structural isinstance checks so custom
+        # subclasses can override their native structural fallback.
         resolution: _AdapterResolution = self.adapters._resolve_result(value)
         if resolution.resolution_failed:
             state.mark_limit(LIMIT_ADAPTER_ERROR)
             counters.adapter_errors += 1
-            # Fall through to structural handlers — the value may still be
-            # normalizable via Mapping/Sequence/dataclass etc.
         elif resolution.converter is not None:
             return self._normalize_with_adapter(
-                value, resolution, depth=depth, state=state, counters=counters, path=path
+                value,
+                resolution,
+                depth=depth,
+                state=state,
+                counters=counters,
+                path=path,
             )
 
-        # ---------------------------------------------------------------
-        # Structural fallbacks — only reached when no adapter matched.
-        # ---------------------------------------------------------------
         if isinstance(value, str):
             return self._clean_text(value, counters=counters)
         if isinstance(value, Mapping):
             return self._normalize_mapping(
-                value, depth=depth, state=state, counters=counters, parent_path=path
+                value,
+                depth=depth,
+                state=state,
+                counters=counters,
+                parent_path=path,
             )
         if isinstance(value, (list, tuple)):
             return self._normalize_sequence(
-                value, depth=depth, state=state, counters=counters, parent_path=path
+                value,
+                depth=depth,
+                state=state,
+                counters=counters,
+                parent_path=path,
             )
         if isinstance(value, (set, frozenset)):
             return self._normalize_set(
-                value, depth=depth, state=state, counters=counters, parent_path=path
+                value,
+                depth=depth,
+                state=state,
+                counters=counters,
+                parent_path=path,
             )
-
         if is_dataclass(value) and not isinstance(value, type):
             return self._normalize_dataclass(
-                value, depth=depth, state=state, counters=counters, parent_path=path
+                value,
+                depth=depth,
+                state=state,
+                counters=counters,
+                parent_path=path,
             )
         if isinstance(value, Enum):
             return self._normalize(
-                value.value, depth=depth + 1, state=state, counters=counters, path=path
+                value.value,
+                depth=depth + 1,
+                state=state,
+                counters=counters,
+                path=path,
             )
         if isinstance(value, Decimal):
             return (
@@ -282,7 +251,11 @@ class _SafeDataNormalizer:
             return self._clean_text(str(value), counters=counters)
         if isinstance(value, BaseException):
             return self._normalize_exception(
-                value, depth=depth, state=state, counters=counters, parent_path=path
+                value,
+                depth=depth,
+                state=state,
+                counters=counters,
+                parent_path=path,
             )
 
         state.mark_limit(LIMIT_UNSUPPORTED_TYPE)
@@ -300,7 +273,7 @@ class _SafeDataNormalizer:
         path: _TraversalPath = (),
     ) -> JSONValue:
         converter = resolution.converter
-        assert converter is not None  # caller guarantees this
+        assert converter is not None
 
         value_id = id(value)
         if value_id in state.active:
@@ -317,8 +290,6 @@ class _SafeDataNormalizer:
                 counters.unsupported += 1
                 return f"[UNSUPPORTED:{_safe_type_name(value)}]"
 
-            # Converter returned the original object — prevent infinite recursion
-            # and avoid exposing the raw value.
             if converted_value is value:
                 state.mark_limit(LIMIT_ADAPTER_ERROR)
                 counters.adapter_errors += 1
@@ -326,7 +297,11 @@ class _SafeDataNormalizer:
                 return f"[UNSUPPORTED:{_safe_type_name(value)}]"
 
             return self._normalize(
-                converted_value, depth=depth + 1, state=state, counters=counters, path=path
+                converted_value,
+                depth=depth + 1,
+                state=state,
+                counters=counters,
+                path=path,
             )
         finally:
             state.active.discard(value_id)
@@ -465,7 +440,7 @@ class _SafeDataNormalizer:
                 state.mark_limit(LIMIT_ITERATION_ERROR)
                 return [UNAVAILABLE_PLACEHOLDER]
 
-            index = 0
+            source_index = 0
             while True:
                 try:
                     item = next(iterator)
@@ -480,13 +455,17 @@ class _SafeDataNormalizer:
                     cleaned.append(TRUNCATED_PLACEHOLDER)
                     break
 
-                child_path: _TraversalPath = (*parent_path, index)
-                cleaned.append(
-                    self._normalize(
-                        item, depth=depth + 1, state=state, counters=counters, path=child_path
-                    )
+                child_path: _TraversalPath = (*parent_path, source_index)
+                source_index += 1
+                result = self._process_child(
+                    item,
+                    depth=depth + 1,
+                    state=state,
+                    counters=counters,
+                    path=child_path,
                 )
-                index += 1
+                if not isinstance(result, _OmitSentinel):
+                    cleaned.append(result)
             return cleaned
         finally:
             state.active.discard(sequence_id)
@@ -514,7 +493,7 @@ class _SafeDataNormalizer:
                 state.mark_limit(LIMIT_ITERATION_ERROR)
                 return [UNAVAILABLE_PLACEHOLDER]
 
-            index = 0
+            source_index = 0
             while True:
                 try:
                     item = next(iterator)
@@ -526,17 +505,20 @@ class _SafeDataNormalizer:
                     break
 
                 if not state.consume_item():
-                    state.mark_limit(LIMIT_MAX_ITEMS)
                     cleaned.append(TRUNCATED_PLACEHOLDER)
                     break
 
-                child_path: _TraversalPath = (*parent_path, index)
-                cleaned.append(
-                    self._normalize(
-                        item, depth=depth + 1, state=state, counters=counters, path=child_path
-                    )
+                child_path: _TraversalPath = (*parent_path, source_index)
+                source_index += 1
+                result = self._process_child(
+                    item,
+                    depth=depth + 1,
+                    state=state,
+                    counters=counters,
+                    path=child_path,
                 )
-                index += 1
+                if not isinstance(result, _OmitSentinel):
+                    cleaned.append(result)
             return sorted(cleaned, key=_json_sort_key)
         finally:
             state.active.discard(value_id)
@@ -566,31 +548,29 @@ class _SafeDataNormalizer:
 
             result: dict[str, JSONValue] = {}
 
-            type_child_path: _TraversalPath = (*parent_path, "type")
             type_result = self._process_named_field(
                 "type",
                 type_name,
                 depth=depth + 1,
                 state=state,
                 counters=counters,
-                path=type_child_path,
+                path=(*parent_path, "type"),
                 sensitive_key=self.policy.is_sensitive_key("type"),
             )
             if not isinstance(type_result, _OmitSentinel):
                 result["type"] = type_result
 
-            msg_child_path: _TraversalPath = (*parent_path, "message")
-            msg_result = self._process_named_field(
+            message_result = self._process_named_field(
                 "message",
                 message,
                 depth=depth + 1,
                 state=state,
                 counters=counters,
-                path=msg_child_path,
+                path=(*parent_path, "message"),
                 sensitive_key=self.policy.is_sensitive_key("message"),
             )
-            if not isinstance(msg_result, _OmitSentinel):
-                result["message"] = msg_result
+            if not isinstance(message_result, _OmitSentinel):
+                result["message"] = message_result
 
             return result
         finally:
@@ -607,14 +587,40 @@ class _SafeDataNormalizer:
         path: _TraversalPath,
         sensitive_key: bool = False,
     ) -> JSONValue | _OmitSentinel:
-        """Apply PathRule, allowlist, FieldRule, sensitive-key masking, or recurse."""
-        # 1. PathRule check (highest priority)
+        """Apply path and field policies to one named child."""
+        return self._process_child(
+            field_value,
+            depth=depth,
+            state=state,
+            counters=counters,
+            path=path,
+            field_name=field_name,
+            sensitive_key=sensitive_key,
+        )
+
+    def _process_child(
+        self,
+        value: object,
+        *,
+        depth: int,
+        state: TraversalState,
+        counters: _NormalizationCounters,
+        path: _TraversalPath,
+        field_name: str | None = None,
+        sensitive_key: bool = False,
+    ) -> JSONValue | _OmitSentinel:
+        """Apply structured policies to any child, including sequence elements.
+
+        Source indices are part of ``path`` before any item is omitted. This
+        keeps exact rules such as ``items.1`` stable even when ``items.0`` is
+        removed by the allowlist.
+        """
         path_rule = self._matching_path_rule(path)
         if path_rule is not None:
             counters.path_rule_matches += 1
             return self._apply_action(
                 path_rule.action,
-                field_value,
+                value,
                 depth=depth,
                 state=state,
                 counters=counters,
@@ -623,32 +629,69 @@ class _SafeDataNormalizer:
                 category=path_rule.category,
             )
 
-        # 2. Allowlist check
-        if self._allowlist_active and not self._allowlist.is_path_allowed(path):
+        allowlist_match: _AllowlistPathMatch = "exact"
+        if self._allowlist_active:
+            allowlist_match = self._allowlist.match_path(path)
+            if allowlist_match == "none":
+                counters.not_allowed += 1
+                return _OMIT
+            if allowlist_match == "prefix" and _is_definitely_scalar(value):
+                counters.not_allowed += 1
+                return _OMIT
+
+        if field_name is not None:
+            field_rule = self._matching_field_rule(field_name)
+            if field_rule is not None:
+                counters.field_rule_matches += 1
+                processed = self._apply_action(
+                    field_rule.action,
+                    value,
+                    depth=depth,
+                    state=state,
+                    counters=counters,
+                    path=path,
+                    max_chars=field_rule.max_chars,
+                    category=field_rule.category,
+                )
+                return self._omit_non_container_prefix_result(
+                    processed,
+                    allowlist_match=allowlist_match,
+                    counters=counters,
+                )
+
+            if sensitive_key:
+                processed = self._mask_field_value(value, counters=counters)
+                return self._omit_non_container_prefix_result(
+                    processed,
+                    allowlist_match=allowlist_match,
+                    counters=counters,
+                )
+
+        processed = self._normalize(
+            value,
+            depth=depth,
+            state=state,
+            counters=counters,
+            path=path,
+        )
+        return self._omit_non_container_prefix_result(
+            processed,
+            allowlist_match=allowlist_match,
+            counters=counters,
+        )
+
+    @staticmethod
+    def _omit_non_container_prefix_result(
+        processed: JSONValue,
+        *,
+        allowlist_match: _AllowlistPathMatch,
+        counters: _NormalizationCounters,
+    ) -> JSONValue | _OmitSentinel:
+        """Drop scalar output that only matched a parent-prefix allowlist path."""
+        if allowlist_match == "prefix" and not isinstance(processed, (dict, list)):
             counters.not_allowed += 1
             return _OMIT
-
-        # 3. FieldRule check
-        field_rule = self._matching_field_rule(field_name)
-        if field_rule is not None:
-            counters.field_rule_matches += 1
-            return self._apply_action(
-                field_rule.action,
-                field_value,
-                depth=depth,
-                state=state,
-                counters=counters,
-                path=path,
-                max_chars=field_rule.max_chars,
-                category=field_rule.category,
-            )
-
-        # 4. Sensitive key check
-        if sensitive_key:
-            return self._mask_field_value(field_value, counters=counters)
-
-        # 5. Normalize recursively
-        return self._normalize(field_value, depth=depth, state=state, counters=counters, path=path)
+        return processed
 
     def _matching_path_rule(self, path: _TraversalPath) -> PathRule | None:
         for rule in self.policy.path_rules:
@@ -674,6 +717,8 @@ class _SafeDataNormalizer:
         max_chars: int | None,
         category: str,
     ) -> JSONValue:
+        del depth, state, path  # Reserved for action implementations that need traversal context.
+
         if action == "mask":
             return self._mask_field_value(value, counters=counters)
         if action == "remove":
@@ -681,12 +726,9 @@ class _SafeDataNormalizer:
             return REMOVED_PLACEHOLDER
         if action == "truncate":
             text = _truncatable_text(value)
-            if text is None:
+            if text is None or max_chars is None:
                 counters.truncated += 1
-                return TRUNCATED_PLACEHOLDER
-            if max_chars is None:
-                counters.truncated += 1
-                return TRUNCATED_PLACEHOLDER
+                return TRUNCATED_FIELD_PLACEHOLDER
             cleaned = self._clean_text(text, counters=counters)
             if len(cleaned) <= max_chars:
                 return cleaned
@@ -707,10 +749,10 @@ class _SafeDataNormalizer:
             text = _pseudonymizable_text(value)
             if text is None:
                 return self._mask_field_value(value, counters=counters)
-            eff_category = category or "credential"
+            effective_category = category or "credential"
             counters.pseudonymized += 1
-            return pseudonymizer.mask_value(text, eff_category)
-        # fallback
+            return pseudonymizer.mask_value(text, effective_category)
+
         return self._mask_field_value(value, counters=counters)
 
     def _mask_field_value(self, value: object, *, counters: _NormalizationCounters) -> str:
@@ -727,6 +769,20 @@ class _SafeDataNormalizer:
         result = self._cleaner.clean_with_result(value)
         counters.masked += len(result.findings)
         return result.cleaned
+
+
+def _is_definitely_scalar(value: object) -> bool:
+    """Return whether ``value`` cannot contain an allowlisted descendant.
+
+    Exact primitive types and built-in scalar value objects are safe to classify
+    immediately. Unknown custom objects are not classified as scalar here
+    because a registered adapter may convert them into a mapping or sequence;
+    their normalized result is checked after adapter processing instead.
+    """
+    value_type = type(value)
+    if value is None or value_type in {bool, int, float, str, bytes, bytearray, memoryview}:
+        return True
+    return isinstance(value, (Enum, Decimal, DateTime, Date, Time, UUID, Path))
 
 
 def _truncatable_text(value: object) -> str | None:
