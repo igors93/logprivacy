@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "logprivacy"
-version = "0.5.1"
+version = "0.5.2"
 description = "Zero-dependency privacy-first log redaction for Python."
 readme = "README.md"
 requires-python = ">=3.10"

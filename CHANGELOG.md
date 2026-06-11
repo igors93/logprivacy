@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.5.2 - Unreleased
+
+### Fixed
+
+- `truncate` field rule now sanitizes the full text before cutting to `max_chars`,
+  preventing secrets from surviving as partial fragments after truncation.
+- `FieldRule.exact` and `FieldRule.contains` now reject match strings that normalize
+  to an empty string (e.g. `"---"`, `"___"`), preventing accidental wildcard matching.
+- `FieldRule.regex` now rejects an empty regex string at construction time.
+- Field rules now apply to `type` and `message` fields produced when an exception
+  is sanitized, providing the same protection as mappings and dataclasses.
+- Adapter resolution now guards against `__instancecheck__` raising; such types are
+  treated as non-matching instead of propagating the error.
+- Converters that raise or return the original object now fail closed, recording an
+  `adapter_error` limitation and returning an `[UNSUPPORTED:TypeName]` placeholder
+  without exposing the original value.
+
+### Changed
+
+- Built-in types handled by the core pipeline (`str`, `int`, `dict`, `list`, etc.)
+  are now reserved and cannot be registered as adapter targets. Registering them
+  raises `ValueError`. Custom subclasses (e.g. `class ExternalList(list)`) remain
+  fully supported.
+- `Cleaner` now builds the text pipeline (`TextScanner`, `FindingResolver`,
+  `TextRedactor`) once in `__post_init__` rather than on every call, improving
+  throughput for repeated use of the same instance.
+- `to_safe_data()` now delegates to `to_safe_data_with_result()` and returns
+  `result.cleaned`; its observable behavior is unchanged.
+
+### Added
+
+- `to_safe_data_with_result()` — returns a `SafeDataResult` with the sanitized
+  value plus completeness, limitations, and per-call stats.
+- `SafeDataResult` — immutable dataclass: `cleaned`, `complete`, `limitations`,
+  `stats`.
+- `SafeDataStats` — immutable dataclass of aggregate counters: `masked`, `removed`,
+  `truncated`, `unsupported`, `adapter_errors`, `field_rule_matches`.
+- `LIMIT_ADAPTER_ERROR`, `LIMIT_UNSUPPORTED_TYPE`, `LIMIT_RECURSIVE` constants
+  exported from `logprivacy.internal.traversal` for stable limitation identifiers.
+
 ## 0.5.1 - Unreleased
 
 ### Changed

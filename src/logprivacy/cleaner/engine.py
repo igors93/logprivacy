@@ -33,28 +33,24 @@ _EXACT_SCALAR_TYPES = frozenset({int, float, complex, bool})
 
 @dataclass(frozen=True, slots=True)
 class Cleaner:
-    """Clean sensitive data from strings and structured values."""
+    """Clean sensitive data from strings and structured values.
+
+    Pipeline components (scanner, resolver, redactor) are built once per
+    instance in ``__post_init__`` so repeated calls to ``clean_text()`` and
+    related methods do not reconstruct them.
+    """
 
     policy: CleanerPolicy = field(default_factory=CleanerPolicy.default)
+    _scanner: TextScanner = field(init=False, repr=False)
+    _resolver: FindingResolver = field(init=False, repr=False)
+    _redactor: TextRedactor = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Validate the rule set eagerly so callers fail fast on bad configurations."""
-        RuleSet(self.policy.rules)
-
-    # ------------------------------------------------------------------
-    # Pipeline component access (built on demand, no extra slots needed)
-    # ------------------------------------------------------------------
-
-    def _rule_set(self) -> RuleSet:
-        return RuleSet(self.policy.rules)
-
-    def _pipeline(self) -> tuple[TextScanner, FindingResolver, TextRedactor]:
-        rule_set = self._rule_set()
-        return (
-            TextScanner(rule_set),
-            FindingResolver(),
-            TextRedactor(rule_set, self.policy.masking),
-        )
+        """Build the text pipeline once and validate the rule set eagerly."""
+        rule_set = RuleSet(self.policy.rules)
+        object.__setattr__(self, "_scanner", TextScanner(rule_set))
+        object.__setattr__(self, "_resolver", FindingResolver())
+        object.__setattr__(self, "_redactor", TextRedactor(rule_set, self.policy.masking))
 
     # ------------------------------------------------------------------
     # Public API
@@ -71,11 +67,10 @@ class Cleaner:
 
     def clean_with_result(self, text: str) -> RedactionResult[str]:
         """Return cleaned text and a ``RedactionResult`` with finding details."""
-        scanner, resolver, redactor = self._pipeline()
-        raw_matches = scanner.scan(text)
-        resolved = resolver.resolve(raw_matches)
+        raw_matches = self._scanner.scan(text)
+        resolved = self._resolver.resolve(raw_matches)
         self._raise_if_blocked_matches(resolved)
-        cleaned, findings = redactor.redact(text, resolved)
+        cleaned, findings = self._redactor.redact(text, resolved)
         return RedactionResult(original=text, cleaned=cleaned, findings=findings)
 
     def audit(self, value: Any) -> AuditReport:
@@ -250,13 +245,11 @@ class Cleaner:
 
     def _sanitize_location_text(self, text: str) -> str:
         """Redact a safe label without applying block-mode side effects."""
-        rule_set = self._rule_set()
-        scanner = TextScanner(rule_set)
-        resolver = FindingResolver()
-        raw_matches = scanner.scan(text)
-        resolved = resolver.resolve(raw_matches)
+        raw_matches = self._scanner.scan(text)
+        resolved = self._resolver.resolve(raw_matches)
         if not resolved:
             return text
+        rule_set = RuleSet(self.policy.rules)
         placeholder_redactor = TextRedactor(rule_set, PlaceholderMaskingStrategy())
         cleaned, _ = placeholder_redactor.redact(text, resolved)
         return cleaned
@@ -264,10 +257,9 @@ class Cleaner:
     def _bounded_findings(
         self, text: str, state: TraversalState, *, path: str = ""
     ) -> tuple[Finding, ...]:
-        scanner, resolver, redactor = self._pipeline()
-        raw_matches = scanner.scan(text)
-        resolved = resolver.resolve(raw_matches)
-        _, findings = redactor.redact(text, resolved)
+        raw_matches = self._scanner.scan(text)
+        resolved = self._resolver.resolve(raw_matches)
+        _, findings = self._redactor.redact(text, resolved)
         if path:
             findings = tuple(f.with_location(path) for f in findings)
         return state.take_findings(findings)
@@ -292,7 +284,7 @@ class Cleaner:
 
     def _find(self, text: str) -> tuple[_DetectedMatch, ...]:
         """Return all matches detected by active rules (internal use)."""
-        return TextScanner(self._rule_set()).scan(text)
+        return self._scanner.scan(text)
 
     def _raise_if_blocked(self, findings: tuple[Finding, ...]) -> None:
         """Raise when policy block categories are present in public findings."""

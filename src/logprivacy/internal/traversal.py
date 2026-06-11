@@ -19,6 +19,9 @@ LIMIT_MAX_ITEMS = "max_items"
 LIMIT_MAX_FINDINGS = "max_findings"
 LIMIT_ITERATION_ERROR = "iteration_error"
 LIMIT_REPRESENTATION_ERROR = "representation_error"
+LIMIT_ADAPTER_ERROR = "adapter_error"
+LIMIT_UNSUPPORTED_TYPE = "unsupported_type"
+LIMIT_RECURSIVE = "recursive_value"
 
 _EXACT_SCALAR_TYPES = frozenset({int, float, complex, bool, type(None)})
 _T = TypeVar("_T")

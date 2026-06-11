@@ -5,7 +5,44 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
 
+from logprivacy.typing import JSONValue
+
 T = TypeVar("T")
+
+
+@dataclass(frozen=True, slots=True)
+class SafeDataStats:
+    """Aggregate counters from a single ``to_safe_data_with_result()`` call.
+
+    Counters are local to one call and do not accumulate across calls.
+    """
+
+    masked: int = 0
+    removed: int = 0
+    truncated: int = 0
+    unsupported: int = 0
+    adapter_errors: int = 0
+    field_rule_matches: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class SafeDataResult:
+    """Full result of a ``to_safe_data_with_result()`` call.
+
+    ``cleaned`` is the sanitized JSON-compatible value.
+    ``complete`` is ``False`` when any part of the input could not be fully
+    inspected (max_depth, max_items, iteration_error, adapter_error, etc.).
+    ``limitations`` contains stable non-sensitive identifiers for each limit hit.
+    ``stats`` contains aggregate counters for the operation.
+
+    The result does not retain any reference to the original value, source text,
+    raw payload, or adapter.
+    """
+
+    cleaned: JSONValue
+    complete: bool
+    limitations: tuple[str, ...]
+    stats: SafeDataStats
 
 
 @dataclass(frozen=True, slots=True, repr=False)

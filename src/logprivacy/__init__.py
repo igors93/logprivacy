@@ -38,13 +38,13 @@ from logprivacy.masking.strategy import (
     PlaceholderMaskingStrategy,
 )
 from logprivacy.policy import CleanerPolicy
-from logprivacy.result import Finding, RedactionResult
+from logprivacy.result import Finding, RedactionResult, SafeDataResult, SafeDataStats
 from logprivacy.rules.custom import CustomRegexRule
 from logprivacy.rules.email import EmailRule
 from logprivacy.rules.secret import SecretRule
 from logprivacy.rules.token import TokenRule
 from logprivacy.rules.url import UrlRule
-from logprivacy.safe_data import to_safe_data
+from logprivacy.safe_data import to_safe_data, to_safe_data_with_result
 from logprivacy.typing import JSONScalar, JSONValue
 
 __all__ = [
@@ -69,6 +69,8 @@ __all__ = [
     "PlaceholderMaskingStrategy",
     "RedactionResult",
     "RuleValidationError",
+    "SafeDataResult",
+    "SafeDataStats",
     "SecretRule",
     "TokenRule",
     "UrlRule",
@@ -86,6 +88,7 @@ __all__ = [
     "safe_json_dumps",
     "scan_file",
     "to_safe_data",
+    "to_safe_data_with_result",
 ]
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"

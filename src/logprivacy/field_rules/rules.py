@@ -23,6 +23,7 @@ class FieldRule:
     mode: FieldMatchMode = "exact"
     max_chars: int | None = None
     _compiled: Pattern[str] | None = field(default=None, init=False, repr=False, compare=False)
+    _normalized_match: str = field(default="", init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.match, str) or not self.match.strip():
@@ -39,7 +40,17 @@ class FieldRule:
         elif self.max_chars is not None:
             raise ValueError("max_chars is only supported for truncate field rules")
 
+        if self.mode in ("exact", "contains"):
+            normalized_match = normalize_field_name(self.match)
+            if not normalized_match:
+                raise ValueError(
+                    "field rule match must contain at least one alphanumeric character"
+                )
+            object.__setattr__(self, "_normalized_match", normalized_match)
+
         if self.mode == "regex":
+            if not self.match:
+                raise ValueError("field rule regex must not be empty")
             try:
                 compiled = re.compile(self.match, flags=re.IGNORECASE)
             except re.error as exc:
@@ -83,9 +94,9 @@ class FieldRule:
         """Return whether this rule matches ``field_name`` after normalization."""
         normalized_field = normalize_field_name(field_name)
         if self.mode == "exact":
-            return normalized_field == normalize_field_name(self.match)
+            return normalized_field == self._normalized_match
         if self.mode == "contains":
-            return normalize_field_name(self.match) in normalized_field
+            return self._normalized_match in normalized_field
 
         compiled = self._compiled
         if compiled is None:

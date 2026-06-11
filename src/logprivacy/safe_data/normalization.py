@@ -22,10 +22,13 @@ from logprivacy.exceptions import LogBlockedError
 from logprivacy.field_rules import FieldRule
 from logprivacy.internal.traversal import (
     ERROR_MAPPING_KEY,
+    LIMIT_ADAPTER_ERROR,
     LIMIT_ITERATION_ERROR,
     LIMIT_MAX_DEPTH,
     LIMIT_MAX_ITEMS,
+    LIMIT_RECURSIVE,
     LIMIT_REPRESENTATION_ERROR,
+    LIMIT_UNSUPPORTED_TYPE,
     MAX_DEPTH_PLACEHOLDER,
     RECURSIVE_PLACEHOLDER,
     TRUNCATED_MAPPING_KEY,
@@ -36,6 +39,7 @@ from logprivacy.internal.traversal import (
 )
 from logprivacy.masking.value import mask_sensitive_value
 from logprivacy.policy import CleanerPolicy
+from logprivacy.result import SafeDataResult, SafeDataStats
 from logprivacy.typing import JSONValue
 
 NON_FINITE_NUMBER_PLACEHOLDER = "[NON_FINITE_NUMBER]"
@@ -56,11 +60,63 @@ def to_safe_data(
     Unknown objects fail closed as ``"[UNSUPPORTED:TypeName]"``. Converter
     results from ``adapters`` are processed again by the same sanitization
     pipeline and are never trusted as already safe.
+
+    For richer output including completeness, limitations, and stats, use
+    ``to_safe_data_with_result()``.
+    """
+    return to_safe_data_with_result(value, policy=policy, adapters=adapters).cleaned
+
+
+def to_safe_data_with_result(
+    value: object,
+    *,
+    policy: CleanerPolicy | None = None,
+    adapters: AdapterRegistry | None = None,
+) -> SafeDataResult:
+    """Return a sanitized value together with completeness, limitations, and stats.
+
+    ``result.cleaned`` is equivalent to what ``to_safe_data()`` returns.
+    ``result.complete`` is ``False`` when any traversal limit was reached or any
+    branch could not be fully inspected.
+    ``result.limitations`` contains stable non-sensitive identifiers for each limit.
+    ``result.stats`` provides aggregate counters (masked, removed, truncated, etc.).
+
+    The result does not retain any reference to the original value, source text,
+    or raw adapter output.
+
+    Example::
+
+        result = to_safe_data_with_result(payload)
+        if not result.complete:
+            logger.warning("partial sanitization: %s", result.limitations)
+        log_event(result.cleaned)
     """
     effective_policy = CleanerPolicy.default() if policy is None else policy
     effective_adapters = AdapterRegistry.default() if adapters is None else adapters.copy()
     normalizer = _SafeDataNormalizer(effective_policy, effective_adapters)
-    return normalizer.normalize(value)
+    return normalizer.normalize_with_result(value)
+
+
+@dataclass(slots=True)
+class _NormalizationCounters:
+    """Mutable counters local to one normalization call."""
+
+    masked: int = 0
+    removed: int = 0
+    truncated: int = 0
+    unsupported: int = 0
+    adapter_errors: int = 0
+    field_rule_matches: int = 0
+
+    def to_stats(self) -> SafeDataStats:
+        return SafeDataStats(
+            masked=self.masked,
+            removed=self.removed,
+            truncated=self.truncated,
+            unsupported=self.unsupported,
+            adapter_errors=self.adapter_errors,
+            field_rule_matches=self.field_rule_matches,
+        )
 
 
 @dataclass(slots=True)
@@ -72,11 +128,25 @@ class _SafeDataNormalizer:
     def __post_init__(self) -> None:
         self._cleaner = Cleaner(policy=self.policy)
 
-    def normalize(self, value: object) -> JSONValue:
+    def normalize_with_result(self, value: object) -> SafeDataResult:
         state = TraversalState(remaining_items=self.policy.max_items)
-        return self._normalize(value, depth=0, state=state)
+        counters = _NormalizationCounters()
+        cleaned = self._normalize(value, depth=0, state=state, counters=counters)
+        return SafeDataResult(
+            cleaned=cleaned,
+            complete=state.complete,
+            limitations=tuple(state.limitations),
+            stats=counters.to_stats(),
+        )
 
-    def _normalize(self, value: object, *, depth: int, state: TraversalState) -> JSONValue:
+    def _normalize(
+        self,
+        value: object,
+        *,
+        depth: int,
+        state: TraversalState,
+        counters: _NormalizationCounters,
+    ) -> JSONValue:
         if depth > self.policy.max_depth:
             state.mark_limit(LIMIT_MAX_DEPTH)
             return MAX_DEPTH_PLACEHOLDER
@@ -96,20 +166,22 @@ class _SafeDataNormalizer:
             return self._clean_text(bytes(cast(Any, value)).decode("utf-8", errors="replace"))
 
         if isinstance(value, Mapping):
-            return self._normalize_mapping(value, depth=depth, state=state)
+            return self._normalize_mapping(value, depth=depth, state=state, counters=counters)
         if isinstance(value, (list, tuple)):
-            return self._normalize_sequence(value, depth=depth, state=state)
+            return self._normalize_sequence(value, depth=depth, state=state, counters=counters)
         if isinstance(value, (set, frozenset)):
-            return self._normalize_set(value, depth=depth, state=state)
+            return self._normalize_set(value, depth=depth, state=state, counters=counters)
 
         converter = self.adapters.resolve(value)
         if converter is not None:
-            return self._normalize_with_adapter(value, converter, depth=depth, state=state)
+            return self._normalize_with_adapter(
+                value, converter, depth=depth, state=state, counters=counters
+            )
 
         if is_dataclass(value) and not isinstance(value, type):
-            return self._normalize_dataclass(value, depth=depth, state=state)
+            return self._normalize_dataclass(value, depth=depth, state=state, counters=counters)
         if isinstance(value, Enum):
-            return self._normalize(value.value, depth=depth + 1, state=state)
+            return self._normalize(value.value, depth=depth + 1, state=state, counters=counters)
         if isinstance(value, Decimal):
             return (
                 self._clean_text(str(value)) if value.is_finite() else NON_FINITE_NUMBER_PLACEHOLDER
@@ -125,8 +197,10 @@ class _SafeDataNormalizer:
         if isinstance(value, Path):
             return self._clean_text(str(value))
         if isinstance(value, BaseException):
-            return self._normalize_exception(value, depth=depth, state=state)
+            return self._normalize_exception(value, depth=depth, state=state, counters=counters)
 
+        state.mark_limit(LIMIT_UNSUPPORTED_TYPE)
+        counters.unsupported += 1
         return f"[UNSUPPORTED:{_safe_type_name(value)}]"
 
     def _normalize_with_adapter(
@@ -136,9 +210,11 @@ class _SafeDataNormalizer:
         *,
         depth: int,
         state: TraversalState,
+        counters: _NormalizationCounters,
     ) -> JSONValue:
         value_id = id(value)
         if value_id in state.active:
+            state.mark_limit(LIMIT_RECURSIVE)
             return RECURSIVE_PLACEHOLDER
 
         state.active.add(value_id)
@@ -146,9 +222,20 @@ class _SafeDataNormalizer:
             try:
                 converted_value = converter(value)
             except Exception:
-                state.mark_limit(LIMIT_REPRESENTATION_ERROR)
+                state.mark_limit(LIMIT_ADAPTER_ERROR)
+                counters.adapter_errors += 1
+                counters.unsupported += 1
                 return f"[UNSUPPORTED:{_safe_type_name(value)}]"
-            return self._normalize(converted_value, depth=depth + 1, state=state)
+
+            # Converter returned the original object — prevent infinite recursion
+            # and avoid exposing the raw value.
+            if converted_value is value:
+                state.mark_limit(LIMIT_ADAPTER_ERROR)
+                counters.adapter_errors += 1
+                counters.unsupported += 1
+                return f"[UNSUPPORTED:{_safe_type_name(value)}]"
+
+            return self._normalize(converted_value, depth=depth + 1, state=state, counters=counters)
         finally:
             state.active.discard(value_id)
 
@@ -158,9 +245,11 @@ class _SafeDataNormalizer:
         *,
         depth: int,
         state: TraversalState,
+        counters: _NormalizationCounters,
     ) -> dict[str, JSONValue]:
         mapping_id = id(mapping)
         if mapping_id in state.active:
+            state.mark_limit(LIMIT_RECURSIVE)
             return {ERROR_MAPPING_KEY: RECURSIVE_PLACEHOLDER}
 
         state.active.add(mapping_id)
@@ -190,21 +279,17 @@ class _SafeDataNormalizer:
                 output_key = _unique_json_key(self._clean_text(key_text), cleaned)
 
                 if not trusted_key:
-                    cleaned[output_key] = self._mask_field_value(item)
+                    cleaned[output_key] = self._mask_field_value(item, counters=counters)
                     continue
 
-                field_rule = self._matching_field_rule(key_text)
-                if field_rule is not None:
-                    cleaned[output_key] = self._apply_field_rule(
-                        field_rule,
-                        item,
-                        depth=depth + 1,
-                        state=state,
-                    )
-                elif self.policy.is_sensitive_key(key):
-                    cleaned[output_key] = self._mask_field_value(item)
-                else:
-                    cleaned[output_key] = self._normalize(item, depth=depth + 1, state=state)
+                cleaned[output_key] = self._normalize_named_field(
+                    key_text,
+                    item,
+                    depth=depth + 1,
+                    state=state,
+                    counters=counters,
+                    sensitive_key=self.policy.is_sensitive_key(key),
+                )
             return cleaned
         finally:
             state.active.discard(mapping_id)
@@ -215,9 +300,11 @@ class _SafeDataNormalizer:
         *,
         depth: int,
         state: TraversalState,
+        counters: _NormalizationCounters,
     ) -> dict[str, JSONValue]:
         value_id = id(value)
         if value_id in state.active:
+            state.mark_limit(LIMIT_RECURSIVE)
             return {ERROR_MAPPING_KEY: RECURSIVE_PLACEHOLDER}
 
         state.active.add(value_id)
@@ -236,22 +323,14 @@ class _SafeDataNormalizer:
                     cleaned[output_key] = UNAVAILABLE_PLACEHOLDER
                     continue
 
-                field_rule = self._matching_field_rule(key_text)
-                if field_rule is not None:
-                    cleaned[output_key] = self._apply_field_rule(
-                        field_rule,
-                        field_value,
-                        depth=depth + 1,
-                        state=state,
-                    )
-                elif self.policy.is_sensitive_key(key_text):
-                    cleaned[output_key] = self._mask_field_value(field_value)
-                else:
-                    cleaned[output_key] = self._normalize(
-                        field_value,
-                        depth=depth + 1,
-                        state=state,
-                    )
+                cleaned[output_key] = self._normalize_named_field(
+                    key_text,
+                    field_value,
+                    depth=depth + 1,
+                    state=state,
+                    counters=counters,
+                    sensitive_key=self.policy.is_sensitive_key(key_text),
+                )
             return cleaned
         finally:
             state.active.discard(value_id)
@@ -262,9 +341,11 @@ class _SafeDataNormalizer:
         *,
         depth: int,
         state: TraversalState,
+        counters: _NormalizationCounters,
     ) -> list[JSONValue]:
         sequence_id = id(sequence)
         if sequence_id in state.active:
+            state.mark_limit(LIMIT_RECURSIVE)
             return [RECURSIVE_PLACEHOLDER]
 
         state.active.add(sequence_id)
@@ -289,7 +370,9 @@ class _SafeDataNormalizer:
                 if not state.consume_item():
                     cleaned.append(TRUNCATED_PLACEHOLDER)
                     break
-                cleaned.append(self._normalize(item, depth=depth + 1, state=state))
+                cleaned.append(
+                    self._normalize(item, depth=depth + 1, state=state, counters=counters)
+                )
             return cleaned
         finally:
             state.active.discard(sequence_id)
@@ -300,9 +383,11 @@ class _SafeDataNormalizer:
         *,
         depth: int,
         state: TraversalState,
+        counters: _NormalizationCounters,
     ) -> list[JSONValue]:
         value_id = id(values)
         if value_id in state.active:
+            state.mark_limit(LIMIT_RECURSIVE)
             return [RECURSIVE_PLACEHOLDER]
 
         state.active.add(value_id)
@@ -328,7 +413,9 @@ class _SafeDataNormalizer:
                     state.mark_limit(LIMIT_MAX_ITEMS)
                     cleaned.append(TRUNCATED_PLACEHOLDER)
                     break
-                cleaned.append(self._normalize(item, depth=depth + 1, state=state))
+                cleaned.append(
+                    self._normalize(item, depth=depth + 1, state=state, counters=counters)
+                )
             return sorted(cleaned, key=_json_sort_key)
         finally:
             state.active.discard(value_id)
@@ -339,24 +426,62 @@ class _SafeDataNormalizer:
         *,
         depth: int,
         state: TraversalState,
+        counters: _NormalizationCounters,
     ) -> dict[str, JSONValue]:
         value_id = id(value)
         if value_id in state.active:
+            state.mark_limit(LIMIT_RECURSIVE)
             return {"type": _safe_type_name(value), "message": RECURSIVE_PLACEHOLDER}
 
         state.active.add(value_id)
         try:
+            type_name = _safe_type_name(value)
             try:
-                message = str(value)
+                message: object = str(value)
             except Exception:
                 state.mark_limit(LIMIT_REPRESENTATION_ERROR)
                 message = UNAVAILABLE_PLACEHOLDER
             return {
-                "type": _safe_type_name(value),
-                "message": self._normalize(message, depth=depth + 1, state=state),
+                "type": self._normalize_named_field(
+                    "type",
+                    type_name,
+                    depth=depth + 1,
+                    state=state,
+                    counters=counters,
+                    sensitive_key=self.policy.is_sensitive_key("type"),
+                ),
+                "message": self._normalize_named_field(
+                    "message",
+                    message,
+                    depth=depth + 1,
+                    state=state,
+                    counters=counters,
+                    sensitive_key=self.policy.is_sensitive_key("message"),
+                ),
             }
         finally:
             state.active.discard(value_id)
+
+    def _normalize_named_field(
+        self,
+        field_name: str,
+        field_value: object,
+        *,
+        depth: int,
+        state: TraversalState,
+        counters: _NormalizationCounters,
+        sensitive_key: bool = False,
+    ) -> JSONValue:
+        """Apply the first matching FieldRule, sensitive-key masking, or recurse."""
+        field_rule = self._matching_field_rule(field_name)
+        if field_rule is not None:
+            counters.field_rule_matches += 1
+            return self._apply_field_rule(
+                field_rule, field_value, depth=depth, state=state, counters=counters
+            )
+        if sensitive_key:
+            return self._mask_field_value(field_value, counters=counters)
+        return self._normalize(field_value, depth=depth, state=state, counters=counters)
 
     def _matching_field_rule(self, field_name: str) -> FieldRule | None:
         for rule in self.policy.field_rules:
@@ -371,27 +496,36 @@ class _SafeDataNormalizer:
         *,
         depth: int,
         state: TraversalState,
+        counters: _NormalizationCounters,
     ) -> JSONValue:
         if rule.action == "mask":
-            return self._mask_field_value(value)
+            return self._mask_field_value(value, counters=counters)
         if rule.action == "remove":
+            counters.removed += 1
             return REMOVED_PLACEHOLDER
         if rule.action == "truncate":
             text = _truncatable_text(value)
             if text is None:
+                counters.truncated += 1
                 return TRUNCATED_PLACEHOLDER
             max_chars = rule.max_chars
             if max_chars is None:
+                counters.truncated += 1
                 return TRUNCATED_PLACEHOLDER
-            return self._normalize(text[:max_chars], depth=depth, state=state)
+            cleaned = self._clean_text(text)
+            if len(cleaned) <= max_chars:
+                return cleaned
+            counters.truncated += 1
+            return cleaned[:max_chars] + "[TRUNCATED]"
         if rule.action == "block":
             raise LogBlockedError(
                 "LogPrivacy blocked a structured field by policy",
                 categories=("field",),
             )
-        return self._mask_field_value(value)
+        return self._mask_field_value(value, counters=counters)
 
-    def _mask_field_value(self, value: object) -> str:
+    def _mask_field_value(self, value: object, *, counters: _NormalizationCounters) -> str:
+        counters.masked += 1
         return mask_sensitive_value(
             value,
             category="credential",

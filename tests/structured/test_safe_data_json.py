@@ -191,6 +191,8 @@ def test_field_rules_mask_remove_truncate_block_and_precedence() -> None:
         FieldRule.regex(r".*_raw$", action="truncate", max_chars=18),
     )
 
+    # Sanitization happens BEFORE truncation: the secret is removed first,
+    # then the sanitized text is cut to max_chars with a [TRUNCATED] marker.
     assert to_safe_data(
         {
             "password": "secret123",
@@ -201,7 +203,7 @@ def test_field_rules_mask_remove_truncate_block_and_precedence() -> None:
     ) == {
         "password": "[REMOVED]",
         "apiToken": "[SECRET]",
-        "requestRaw": "password=[SECRET]",
+        "requestRaw": "password=[SECRET] [TRUNCATED]",
     }
 
     block_policy = CleanerPolicy.default().add_field_rules(FieldRule.exact("raw", action="block"))
