@@ -248,7 +248,7 @@ class _SafeDataNormalizer:
         if isinstance(value, UUID):
             return self._clean_text(str(value), counters=counters)
         if isinstance(value, Path):
-            return self._clean_text(str(value), counters=counters)
+            return self._clean_text(value.as_posix(), counters=counters)
         if isinstance(value, BaseException):
             return self._normalize_exception(
                 value,
@@ -615,7 +615,41 @@ class _SafeDataNormalizer:
         keeps exact rules such as ``items.1`` stable even when ``items.0`` is
         removed by the allowlist.
         """
-        path_rule = self._matching_path_rule(path)
+        path_rules = self._matching_path_rules(path)
+        field_rules = self._matching_field_rules(field_name) if field_name is not None else ()
+
+        # ``block`` is a security boundary, not an ordinary first-match action.
+        # A later block rule must not be bypassed by an earlier mask/remove rule,
+        # nor by an allowlist that would otherwise omit the field.
+        blocking_path_rule = next((rule for rule in path_rules if rule.action == "block"), None)
+        if blocking_path_rule is not None:
+            counters.path_rule_matches += 1
+            return self._apply_action(
+                blocking_path_rule.action,
+                value,
+                depth=depth,
+                state=state,
+                counters=counters,
+                path=path,
+                max_chars=blocking_path_rule.max_chars,
+                category=blocking_path_rule.category,
+            )
+
+        blocking_field_rule = next((rule for rule in field_rules if rule.action == "block"), None)
+        if blocking_field_rule is not None:
+            counters.field_rule_matches += 1
+            return self._apply_action(
+                blocking_field_rule.action,
+                value,
+                depth=depth,
+                state=state,
+                counters=counters,
+                path=path,
+                max_chars=blocking_field_rule.max_chars,
+                category=blocking_field_rule.category,
+            )
+
+        path_rule = next((rule for rule in path_rules if rule.action != "block"), None)
         if path_rule is not None:
             counters.path_rule_matches += 1
             return self._apply_action(
@@ -640,7 +674,7 @@ class _SafeDataNormalizer:
                 return _OMIT
 
         if field_name is not None:
-            field_rule = self._matching_field_rule(field_name)
+            field_rule = next((rule for rule in field_rules if rule.action != "block"), None)
             if field_rule is not None:
                 counters.field_rule_matches += 1
                 processed = self._apply_action(
@@ -693,17 +727,25 @@ class _SafeDataNormalizer:
             return _OMIT
         return processed
 
+    def _matching_path_rules(self, path: _TraversalPath) -> tuple[PathRule, ...]:
+        """Return all matching path rules in declaration order."""
+        return tuple(
+            rule
+            for rule in self.policy.path_rules
+            if isinstance(rule, PathRule) and rule.matches_traversal_path(path)
+        )
+
+    def _matching_field_rules(self, field_name: str) -> tuple[FieldRule, ...]:
+        """Return all matching field rules in declaration order."""
+        return tuple(rule for rule in self.policy.field_rules if rule.matches(field_name))
+
     def _matching_path_rule(self, path: _TraversalPath) -> PathRule | None:
-        for rule in self.policy.path_rules:
-            if isinstance(rule, PathRule) and rule.matches_traversal_path(path):
-                return rule
-        return None
+        """Return the first matching path rule for compatibility with internal callers."""
+        return next(iter(self._matching_path_rules(path)), None)
 
     def _matching_field_rule(self, field_name: str) -> FieldRule | None:
-        for rule in self.policy.field_rules:
-            if rule.matches(field_name):
-                return rule
-        return None
+        """Return the first matching field rule for compatibility with internal callers."""
+        return next(iter(self._matching_field_rules(field_name)), None)
 
     def _apply_action(
         self,
