@@ -120,4 +120,4 @@ __all__ = [
     "to_safe_data_with_result",
 ]
 
-__version__ = "0.5.3"
+__version__ = "0.6.0"

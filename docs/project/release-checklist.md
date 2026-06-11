@@ -17,9 +17,11 @@ Both values must match.
 
 ## 2. Update CHANGELOG.md
 
-- Rename the `Unreleased` section to the new version and today's date.
-- Add a new empty `Unreleased` section at the top.
-- Group changes under: `Added`, `Changed`, `Fixed`, `Documentation`, `Tests`.
+- Rename the `[Unreleased]` section to the new version and today's date
+  (e.g. `## 0.6.0 - 2026-06-11`).
+- Add a new empty `## [Unreleased]` section at the top.
+- Group changes under: `Added`, `Changed`, `Fixed`, `Documentation`, `Tests`,
+  `Security`.
 
 ---
 
@@ -32,12 +34,22 @@ Both values must match.
 This runs formatting, linting, type checks, tests, and a package build.
 All steps must pass before continuing.
 
+**Windows:** run each step individually or use Git Bash / WSL.
+
 ---
 
 ## 4. Confirm GitHub Actions is green
 
 Push to a branch and open a pull request, or push directly to `main`.
-Wait for all CI jobs (quality, tests, build) to pass on GitHub Actions.
+Wait for all CI jobs (quality, tests on all platforms, build) to pass.
+
+The matrix must be green on:
+
+| OS | Python |
+|---|---|
+| Linux | 3.10, 3.11, 3.12, 3.13, 3.14 |
+| macOS | 3.10, 3.11, 3.12, 3.13, 3.14 |
+| Windows | 3.10, 3.11, 3.12, 3.13 |
 
 ---
 
@@ -47,7 +59,8 @@ Wait for all CI jobs (quality, tests, build) to pass on GitHub Actions.
 python3 -m build
 ```
 
-This produces `dist/logprivacy-X.Y.Z.tar.gz` and `dist/logprivacy-X.Y.Z-py3-none-any.whl`.
+This produces `dist/logprivacy-X.Y.Z.tar.gz` and
+`dist/logprivacy-X.Y.Z-py3-none-any.whl`.
 
 ---
 
@@ -72,14 +85,12 @@ git push origin vX.Y.Z
 
 ---
 
-## 8. Publish the release
+## 8. Create a GitHub Release
 
-```bash
-python3 -m twine upload dist/*
-```
-
-You will need a PyPI API token configured in `~/.pypirc` or as an environment
-variable.
+Go to the repository's Releases page and create a new release for the tag
+`vX.Y.Z`. Publishing the release triggers the `publish.yml` workflow, which
+runs the full quality gate, builds the package, verifies the wheel, and
+publishes to PyPI using OIDC trusted publishing (no API token required).
 
 ---
 
@@ -98,10 +109,9 @@ python3 -c "import logprivacy; print(logprivacy.__version__)"
 
 | Step | Command |
 |---|---|
-| Format | `python3 -m ruff format .` |
-| Lint | `python3 -m ruff check .` |
-| Type check | `python3 -m mypy src` |
-| Test | `python3 -m pytest` |
-| Build | `python3 -m build` |
+| Format | `python -m ruff format .` |
+| Lint | `python -m ruff check .` |
+| Type check | `python -m mypy src` |
+| Test | `python -m pytest -v` |
+| Build | `python -m build` |
 | Full pipeline | `./scripts/ci.sh` |
-| Publish | `python3 -m twine upload dist/*` |

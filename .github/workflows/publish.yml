@@ -42,10 +42,16 @@ jobs:
         run: python -m mypy src
 
       - name: Run tests
-        run: python -m pytest
+        run: python -m pytest -v --tb=short
 
       - name: Build package
         run: python -m build
+
+      - name: Verify wheel installs cleanly
+        run: |
+          python -m venv /tmp/verify-env
+          /tmp/verify-env/bin/pip install dist/*.whl
+          /tmp/verify-env/bin/python -c "import logprivacy; print(logprivacy.__version__)"
 
       - name: Publish package to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

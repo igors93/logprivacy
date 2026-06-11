@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+## 0.6.0 - 2026-06-11
+
+### Added
+
+- CI matrix now covers **Linux, macOS, and Windows** across Python 3.10–3.14,
+  ensuring the library works on all supported platforms and interpreter versions.
+- Python 3.13 and 3.14 (pre-release) added to the test matrix and to the
+  `Programming Language :: Python` PyPI classifiers.
+- `allow-prereleases: true` in the CI setup action to allow testing on
+  Python 3.14 pre-release builds.
+- Post-build wheel smoke-test in CI and publish workflows: the built wheel is
+  installed into a clean virtual environment and `logprivacy.__version__` is
+  verified before publishing.
+
+### Changed
+
+- `pyproject.toml` classifier updated from `Development Status :: 3 - Alpha`
+  to `Development Status :: 4 - Beta`.
+- Added `Operating System :: OS Independent`, `Topic :: Security`, and
+  `Topic :: System :: Logging` classifiers.
+- CI test job renamed from `Tests on Python ${{ matrix.python-version }}` to
+  `Tests — Python ${{ matrix.python-version }} on ${{ matrix.os }}` to make
+  the matrix dimension visible in the GitHub Actions UI.
+- `pytest` invocation in CI now uses `-v --tb=short` for clearer failure output.
+
+---
+
 ## 0.5.3 - Unreleased
 
 ### Added
