@@ -8,7 +8,7 @@ import os
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
-from typing import IO, Literal, TextIO, cast
+from typing import IO, Literal, TextIO
 
 from logprivacy.adapters import AdapterRegistry
 from logprivacy.cleaner import Cleaner
@@ -32,6 +32,8 @@ _SourceLine = tuple[int, str | None, str | None]
 
 _LIMIT_INVALID_JSON = "invalid_json"
 _LIMIT_INVALID_UTF8 = "invalid_utf8"
+_LIMIT_MAX_LINE_BYTES = "max_line_bytes"
+_MAX_PHYSICAL_LINE_BYTES = 1_000_000
 
 
 def safe_jsonl_write(
@@ -314,15 +316,12 @@ def _iter_source_lines(source: _SourceType) -> Iterator[_SourceLine]:
 
 
 def _iter_lines(stream: _SourceStream) -> Iterator[_SourceLine]:
-    """Yield line number, decoded text, and an optional safe error reason."""
-    iterator = iter(stream)
+    """Yield source lines while bounding each physical read."""
     line_number = 0
 
     while True:
         try:
-            raw_line = next(iterator)
-        except StopIteration:
-            return
+            raw_line = stream.readline(_MAX_PHYSICAL_LINE_BYTES + 1)
         except UnicodeDecodeError:
             # A caller-provided text stream may fail inside its decoder. Its
             # state is not guaranteed to be recoverable, so report one error
@@ -330,7 +329,19 @@ def _iter_lines(stream: _SourceStream) -> Iterator[_SourceLine]:
             yield line_number + 1, None, _LIMIT_INVALID_UTF8
             return
 
+        if raw_line == b"" or raw_line == "":
+            return
+
         line_number += 1
+        if len(raw_line) > _MAX_PHYSICAL_LINE_BYTES:
+            if not _ends_with_newline(raw_line):
+                try:
+                    _discard_line_remainder(stream)
+                except UnicodeDecodeError:
+                    yield line_number, None, _LIMIT_MAX_LINE_BYTES
+                    return
+            yield line_number, None, _LIMIT_MAX_LINE_BYTES
+            continue
 
         if isinstance(raw_line, bytes):
             try:
@@ -339,17 +350,32 @@ def _iter_lines(stream: _SourceStream) -> Iterator[_SourceLine]:
                 yield line_number, None, _LIMIT_INVALID_UTF8
                 continue
         else:
-            # ``stream`` is a union of text and binary streams. Mypy cannot
-            # always narrow the result of ``next(iterator)`` to ``str`` here,
-            # even though the bytes branch was handled above.
-            decoded = cast(str, raw_line)
+            decoded = raw_line
 
         yield line_number, decoded, None
 
 
+def _ends_with_newline(value: str | bytes) -> bool:
+    """Return whether a bounded chunk reaches the end of its physical line."""
+    return value.endswith(b"\n") if isinstance(value, bytes) else value.endswith("\n")
+
+
+def _discard_line_remainder(stream: _SourceStream) -> None:
+    """Consume an oversized physical line in bounded chunks."""
+    while True:
+        chunk = stream.readline(_MAX_PHYSICAL_LINE_BYTES + 1)
+        if chunk == b"" or chunk == "" or _ends_with_newline(chunk):
+            return
+
+
 def _line_processing_error(line_number: int, reason: str) -> JSONLProcessingError:
     """Build a safe public exception for one invalid source line."""
-    description = "invalid UTF-8" if reason == _LIMIT_INVALID_UTF8 else "invalid JSON"
+    if reason == _LIMIT_INVALID_UTF8:
+        description = "invalid UTF-8"
+    elif reason == _LIMIT_MAX_LINE_BYTES:
+        description = "physical line exceeds the safety limit"
+    else:
+        description = "invalid JSON"
     return JSONLProcessingError(
         f"{description} at line {line_number}",
         line_number=line_number,

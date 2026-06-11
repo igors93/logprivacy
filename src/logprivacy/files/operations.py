@@ -5,18 +5,21 @@ from __future__ import annotations
 import os
 import stat
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import suppress
 from pathlib import Path
-from typing import cast
+from typing import IO, cast
 
 from logprivacy.audit import AuditReport
 from logprivacy.cleaner import Cleaner
+from logprivacy.exceptions import InputLimitExceededError
 from logprivacy.internal.audit_location import format_file_location
 from logprivacy.internal.traversal import LIMIT_MAX_FINDINGS
 from logprivacy.policy import CleanerPolicy
 from logprivacy.result import Finding
 
+_MAX_PHYSICAL_LINE_CHARS = 1_000_000
+_LIMIT_MAX_LINE_CHARS = "max_line_chars"
 _TEMP_PREFIX = ".logprivacy-"
 _TEMP_SUFFIX = ".tmp"
 _FCHMOD = cast(Callable[[int, int], None] | None, getattr(os, "fchmod", None))
@@ -34,10 +37,19 @@ def scan_file(
     limitations: list[str] = []
     file_path = Path(path)
     safe_name = cleaner._sanitize_location_text(file_path.name)
-    line_number = 0
-    with file_path.open("r", encoding=encoding, errors="replace") as stream:
-        for line in stream:
-            line_number += 1
+    with file_path.open(
+        "r",
+        encoding=encoding,
+        errors="replace",
+        newline="",
+    ) as stream:
+        for line_number, line, line_error in _iter_bounded_text_lines(stream):
+            if line_error is not None:
+                if line_error not in limitations:
+                    limitations.append(line_error)
+                continue
+
+            assert line is not None
             report = cleaner.audit(line)
             for limitation in report.limitations:
                 if limitation not in limitations:
@@ -206,7 +218,13 @@ def _write_cleaned_file(
             newline="",
         ) as source,
     ):
-        for line in source:
+        for _, line, line_error in _iter_bounded_text_lines(source):
+            if line_error is not None:
+                raise InputLimitExceededError(
+                    limit=line_error,
+                    maximum=_MAX_PHYSICAL_LINE_CHARS,
+                )
+            assert line is not None
             target.write(cleaner.clean_text(line))
 
         if _FCHMOD is not None:
@@ -217,6 +235,34 @@ def _write_cleaned_file(
 
     if _FCHMOD is None:
         os.chmod(temporary_path, target_mode)
+
+
+def _iter_bounded_text_lines(
+    stream: IO[str],
+) -> Iterator[tuple[int, str | None, str | None]]:
+    """Yield physical lines without allowing one line to allocate unbounded memory."""
+    line_number = 0
+    while True:
+        line = stream.readline(_MAX_PHYSICAL_LINE_CHARS + 1)
+        if line == "":
+            return
+
+        line_number += 1
+        if len(line) > _MAX_PHYSICAL_LINE_CHARS:
+            if not line.endswith("\n"):
+                _discard_text_line_remainder(stream)
+            yield line_number, None, _LIMIT_MAX_LINE_CHARS
+            continue
+
+        yield line_number, line, None
+
+
+def _discard_text_line_remainder(stream: IO[str]) -> None:
+    """Consume an oversized line in bounded chunks so later lines stay readable."""
+    while True:
+        chunk = stream.readline(_MAX_PHYSICAL_LINE_CHARS + 1)
+        if chunk == "" or chunk.endswith("\n"):
+            return
 
 
 def _remove_temporary_file(path: Path) -> None:

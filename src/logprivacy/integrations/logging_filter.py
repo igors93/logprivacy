@@ -202,10 +202,11 @@ class LogPrivacyFilter(logging.Filter):
             if self.drop_blocked is False:
                 raise
             categories = ",".join(exc.categories)
-            _replace_record_with_marker(
-                record,
+            marker = sanitize_output_text(
                 f"[LOGPRIVACY BLOCKED categories={categories}]",
+                max_chars=DEFAULT_MAX_RENDER_CHARS,
             )
+            _replace_record_with_marker(record, marker)
             return True
         except InputLimitExceededError as exc:
             _replace_record_with_marker(
