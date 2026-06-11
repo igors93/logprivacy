@@ -6,6 +6,7 @@ from unicodedata import category as unicode_category
 from urllib.parse import parse_qsl, quote_plus, urlsplit, urlunsplit
 
 from logprivacy.cleaner import Cleaner
+from logprivacy.masking.value import mask_sensitive_value
 from logprivacy.policy import CleanerPolicy
 
 # URL-specific secret names that are not always appropriate as global mapping
@@ -45,9 +46,13 @@ def _category_for_parameter(key: str) -> str:
 
 def _mask_value(cleaner: Cleaner, value: str, *, category: str, reason: str) -> str:
     """Mask one concrete URL component using the configured strategy."""
-    if not value:
-        return cleaner.policy.masking.mask_category(category)
-    return cleaner.policy.masking.mask_value(value, category)
+    return mask_sensitive_value(
+        value,
+        category=category,
+        rule_name="url",
+        reason=reason,
+        policy=cleaner.policy,
+    )
 
 
 def _escape_control_characters(value: str) -> str:

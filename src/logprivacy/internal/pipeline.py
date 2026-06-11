@@ -120,7 +120,7 @@ class TextRedactor:
                 end=match.end,
                 replacement=replacement,
                 reason=match.reason,
-                metadata=dict(match.metadata),
+                metadata={key: value for key, value in match.metadata.items() if key != "value"},
                 _matched=match.matched if retain_sensitive_matches else "",
             )
             findings.append(finding)
