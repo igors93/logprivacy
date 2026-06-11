@@ -44,6 +44,7 @@ class Cleaner:
     _scanner: TextScanner = field(init=False, repr=False)
     _resolver: FindingResolver = field(init=False, repr=False)
     _redactor: TextRedactor = field(init=False, repr=False)
+    _placeholder_redactor: TextRedactor = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Build the text pipeline once and validate the rule set eagerly."""
@@ -51,6 +52,11 @@ class Cleaner:
         object.__setattr__(self, "_scanner", TextScanner(rule_set))
         object.__setattr__(self, "_resolver", FindingResolver())
         object.__setattr__(self, "_redactor", TextRedactor(rule_set, self.policy.masking))
+        object.__setattr__(
+            self,
+            "_placeholder_redactor",
+            TextRedactor(rule_set, PlaceholderMaskingStrategy()),
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -249,9 +255,7 @@ class Cleaner:
         resolved = self._resolver.resolve(raw_matches)
         if not resolved:
             return text
-        rule_set = RuleSet(self.policy.rules)
-        placeholder_redactor = TextRedactor(rule_set, PlaceholderMaskingStrategy())
-        cleaned, _ = placeholder_redactor.redact(text, resolved)
+        cleaned, _ = self._placeholder_redactor.redact(text, resolved)
         return cleaned
 
     def _bounded_findings(

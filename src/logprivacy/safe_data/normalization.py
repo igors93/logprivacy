@@ -16,7 +16,8 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
 
-from logprivacy.adapters import AdapterConverter, AdapterRegistry
+from logprivacy.adapters import AdapterRegistry
+from logprivacy.adapters.registry import _AdapterResolution
 from logprivacy.cleaner import Cleaner
 from logprivacy.exceptions import LogBlockedError
 from logprivacy.field_rules import FieldRule
@@ -81,6 +82,16 @@ def to_safe_data_with_result(
     ``result.limitations`` contains stable non-sensitive identifiers for each limit.
     ``result.stats`` provides aggregate counters (masked, removed, truncated, etc.).
 
+    Limitation identifiers:
+    - ``max_depth`` — nesting exceeded ``policy.max_depth``;
+    - ``max_items`` — ``policy.max_items`` exhausted;
+    - ``iteration_error`` — iteration over a mapping or sequence failed;
+    - ``representation_error`` — ``str()`` or ``getattr`` on a value failed;
+    - ``adapter_error`` — adapter converter raised, returned self, or
+      ``__instancecheck__`` raised during resolution;
+    - ``unsupported_type`` — no handler or adapter for the value type;
+    - ``recursive_value`` — a cycle was detected.
+
     The result does not retain any reference to the original value, source text,
     or raw adapter output.
 
@@ -99,7 +110,21 @@ def to_safe_data_with_result(
 
 @dataclass(slots=True)
 class _NormalizationCounters:
-    """Mutable counters local to one normalization call."""
+    """Mutable counters local to one normalization call.
+
+    Counter meanings:
+    - ``masked``: total substitutions — text findings from ``clean_with_result``
+      (each finding is one substitution) plus structural ``mask`` actions and
+      sensitive-key masking (each counted once per field).
+    - ``removed``: fields replaced with ``[REMOVED]`` by a ``remove`` rule.
+    - ``truncated``: fields truncated by a ``truncate`` rule (counted once per
+      field even when the sanitized output also contains findings).
+    - ``unsupported``: values replaced with ``[UNSUPPORTED:TypeName]`` including
+      values that caused an adapter error.
+    - ``adapter_errors``: adapter converters that raised, returned self, or
+      resolution failures caused by ``__instancecheck__`` raising.
+    - ``field_rule_matches``: total ``FieldRule`` matches across all fields.
+    """
 
     masked: int = 0
     removed: int = 0
@@ -153,6 +178,9 @@ class _SafeDataNormalizer:
 
         value_type = type(value)
 
+        # ---------------------------------------------------------------
+        # Exact primitive types — reserved, never intercepted by adapters.
+        # ---------------------------------------------------------------
         if value is None or value_type is bool:
             return cast(JSONValue, value)
         if value_type is int:
@@ -160,11 +188,34 @@ class _SafeDataNormalizer:
         if value_type is float:
             float_value = cast(float, value)
             return float_value if math.isfinite(float_value) else NON_FINITE_NUMBER_PLACEHOLDER
-        if isinstance(value, str):
-            return self._clean_text(value)
+        if value_type is str:
+            return self._clean_text(cast(str, value), counters=counters)
         if value_type in _EXACT_BYTE_TYPES:
-            return self._clean_text(bytes(cast(Any, value)).decode("utf-8", errors="replace"))
+            return self._clean_text(
+                bytes(cast(Any, value)).decode("utf-8", errors="replace"), counters=counters
+            )
 
+        # ---------------------------------------------------------------
+        # Adapter resolution — MUST happen before structural isinstance
+        # checks so registered custom subclasses (e.g. ExternalList(list))
+        # are dispatched to their converter first.
+        # ---------------------------------------------------------------
+        resolution: _AdapterResolution = self.adapters._resolve_result(value)
+        if resolution.resolution_failed:
+            state.mark_limit(LIMIT_ADAPTER_ERROR)
+            counters.adapter_errors += 1
+            # Fall through to structural handlers — the value may still be
+            # normalizable via Mapping/Sequence/dataclass etc.
+        elif resolution.converter is not None:
+            return self._normalize_with_adapter(
+                value, resolution, depth=depth, state=state, counters=counters
+            )
+
+        # ---------------------------------------------------------------
+        # Structural fallbacks — only reached when no adapter matched.
+        # ---------------------------------------------------------------
+        if isinstance(value, str):
+            return self._clean_text(value, counters=counters)
         if isinstance(value, Mapping):
             return self._normalize_mapping(value, depth=depth, state=state, counters=counters)
         if isinstance(value, (list, tuple)):
@@ -172,30 +223,26 @@ class _SafeDataNormalizer:
         if isinstance(value, (set, frozenset)):
             return self._normalize_set(value, depth=depth, state=state, counters=counters)
 
-        converter = self.adapters.resolve(value)
-        if converter is not None:
-            return self._normalize_with_adapter(
-                value, converter, depth=depth, state=state, counters=counters
-            )
-
         if is_dataclass(value) and not isinstance(value, type):
             return self._normalize_dataclass(value, depth=depth, state=state, counters=counters)
         if isinstance(value, Enum):
             return self._normalize(value.value, depth=depth + 1, state=state, counters=counters)
         if isinstance(value, Decimal):
             return (
-                self._clean_text(str(value)) if value.is_finite() else NON_FINITE_NUMBER_PLACEHOLDER
+                self._clean_text(str(value), counters=counters)
+                if value.is_finite()
+                else NON_FINITE_NUMBER_PLACEHOLDER
             )
         if isinstance(value, DateTime):
-            return self._clean_text(value.isoformat())
+            return self._clean_text(value.isoformat(), counters=counters)
         if isinstance(value, Date):
-            return self._clean_text(value.isoformat())
+            return self._clean_text(value.isoformat(), counters=counters)
         if isinstance(value, Time):
-            return self._clean_text(value.isoformat())
+            return self._clean_text(value.isoformat(), counters=counters)
         if isinstance(value, UUID):
-            return self._clean_text(str(value))
+            return self._clean_text(str(value), counters=counters)
         if isinstance(value, Path):
-            return self._clean_text(str(value))
+            return self._clean_text(str(value), counters=counters)
         if isinstance(value, BaseException):
             return self._normalize_exception(value, depth=depth, state=state, counters=counters)
 
@@ -206,12 +253,15 @@ class _SafeDataNormalizer:
     def _normalize_with_adapter(
         self,
         value: object,
-        converter: AdapterConverter,
+        resolution: _AdapterResolution,
         *,
         depth: int,
         state: TraversalState,
         counters: _NormalizationCounters,
     ) -> JSONValue:
+        converter = resolution.converter
+        assert converter is not None  # caller guarantees this
+
         value_id = id(value)
         if value_id in state.active:
             state.mark_limit(LIMIT_RECURSIVE)
@@ -276,7 +326,9 @@ class _SafeDataNormalizer:
                     break
 
                 key_text, trusted_key = safe_mapping_key_text(key)
-                output_key = _unique_json_key(self._clean_text(key_text), cleaned)
+                output_key = _unique_json_key(
+                    self._clean_text(key_text, counters=counters), cleaned
+                )
 
                 if not trusted_key:
                     cleaned[output_key] = self._mask_field_value(item, counters=counters)
@@ -316,10 +368,13 @@ class _SafeDataNormalizer:
                     break
 
                 key_text = field_info.name
-                output_key = _unique_json_key(self._clean_text(key_text), cleaned)
+                output_key = _unique_json_key(
+                    self._clean_text(key_text, counters=counters), cleaned
+                )
                 try:
                     field_value = getattr(value, key_text)
                 except Exception:
+                    state.mark_limit(LIMIT_REPRESENTATION_ERROR)
                     cleaned[output_key] = UNAVAILABLE_PLACEHOLDER
                     continue
 
@@ -512,7 +567,7 @@ class _SafeDataNormalizer:
             if max_chars is None:
                 counters.truncated += 1
                 return TRUNCATED_PLACEHOLDER
-            cleaned = self._clean_text(text)
+            cleaned = self._clean_text(text, counters=counters)
             if len(cleaned) <= max_chars:
                 return cleaned
             counters.truncated += 1
@@ -534,8 +589,10 @@ class _SafeDataNormalizer:
             policy=self.policy,
         )
 
-    def _clean_text(self, value: str) -> str:
-        return self._cleaner.clean_text(value)
+    def _clean_text(self, value: str, *, counters: _NormalizationCounters) -> str:
+        result = self._cleaner.clean_with_result(value)
+        counters.masked += len(result.findings)
+        return result.cleaned
 
 
 def _truncatable_text(value: object) -> str | None:

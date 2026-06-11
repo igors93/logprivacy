@@ -265,14 +265,17 @@ class TestAdapterFailClosed:
             with pytest.raises(ValueError, match="reserved"):
                 registry.register(t, lambda v: str(v))
 
-    def test_custom_subclass_of_list_accepted(self) -> None:
+    def test_custom_subclass_of_list_adapter_called_before_structural_fallback(self) -> None:
+        # Proves adapter dispatch fires BEFORE the isinstance(value, (list, tuple))
+        # structural fallback.  If the structural fallback ran first the result
+        # would be [1, 2, 3], not the dict the converter returns.
         class ExternalList(list):  # type: ignore[type-arg]
             pass
 
         registry = AdapterRegistry.default()
-        registry.register(ExternalList, lambda v: list(v))
+        registry.register(ExternalList, lambda v: {"adapted": True, "items": list(v)})
         result = to_safe_data(ExternalList([1, 2, 3]), adapters=registry)
-        assert result == [1, 2, 3]
+        assert result == {"adapted": True, "items": [1, 2, 3]}
 
     def test_converter_raising_returns_unsupported(self) -> None:
         class MyObj:
@@ -307,7 +310,12 @@ class TestAdapterFailClosed:
         assert isinstance(result, str)
         assert result.startswith("[UNSUPPORTED:")
 
-    def test_metaclass_instancecheck_raises_treated_as_non_matching(self) -> None:
+    def test_metaclass_instancecheck_raises_marks_adapter_error(self) -> None:
+        # BadABC has __instancecheck__ that raises.  When it is registered and
+        # a Concrete() (unrelated, not in registry MRO) is normalized, Phase 2
+        # of resolution calls isinstance(Concrete(), BadABC) which triggers
+        # BadMeta.__instancecheck__ → raises → resolution_failed=True → the
+        # normalizer must mark adapter_error, NOT silently fall through.
         class BadMeta(type):
             def __instancecheck__(cls, instance: object) -> bool:
                 raise RuntimeError("boom")
@@ -319,13 +327,11 @@ class TestAdapterFailClosed:
             pass
 
         registry = AdapterRegistry.default()
-        # Registering using direct class mapping (not virtual) to avoid isinstance
-        # We use a concrete type that shares no MRO with BadABC
-        registry.register(Concrete, lambda v: {"ok": True})
+        registry.register(BadABC, lambda v: {"ok": True})
 
-        # Creating a Concrete object should work fine
-        result = to_safe_data(Concrete(), adapters=registry)
-        assert result == {"ok": True}
+        result = to_safe_data_with_result(Concrete(), adapters=registry)
+        assert result.complete is False
+        assert "adapter_error" in result.limitations
 
     def test_converter_produces_cycle_is_handled(self) -> None:
         class MyObj:

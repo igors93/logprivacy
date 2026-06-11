@@ -42,7 +42,7 @@ All notable changes to this project will be documented in this file.
 - `LIMIT_ADAPTER_ERROR`, `LIMIT_UNSUPPORTED_TYPE`, `LIMIT_RECURSIVE` constants
   exported from `logprivacy.internal.traversal` for stable limitation identifiers.
 
-## 0.5.1 - Unreleased
+## 0.5.1 - 2026-06-04
 
 ### Changed
 
