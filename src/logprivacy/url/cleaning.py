@@ -6,8 +6,14 @@ from unicodedata import category as unicode_category
 from urllib.parse import parse_qsl, quote_plus, urlsplit, urlunsplit
 
 from logprivacy.cleaner import Cleaner
+from logprivacy.exceptions import InputLimitExceededError
+from logprivacy.internal.pipeline import DEFAULT_MAX_TEXT_CHARS
 from logprivacy.masking.value import mask_sensitive_value
 from logprivacy.policy import CleanerPolicy
+
+_LIMIT_MAX_URL_CHARS = "max_url_chars"
+_LIMIT_MAX_URL_FIELDS = "max_url_fields"
+_MAX_URL_FIELDS = 10_000
 
 # URL-specific secret names that are not always appropriate as global mapping
 # keys.  ``CleanerPolicy.is_sensitive_key()`` remains the primary source of
@@ -71,10 +77,23 @@ def _encode_parameter_value(value: str) -> str:
     return quote_plus(value, safe="[],:/@-._~")
 
 
+def _parameter_field_count(value: str) -> int:
+    """Count ampersand-separated fields without allocating decoded pairs."""
+    return value.count("&") + 1 if value else 0
+
+
 def _clean_parameter_string(value: str, cleaner: Cleaner) -> str:
-    """Clean a query-string-like component while preserving parameter order."""
+    """Clean a bounded query-string-like component while preserving order."""
+    max_fields = _MAX_URL_FIELDS
+    if _parameter_field_count(value) > max_fields:
+        raise InputLimitExceededError(limit=_LIMIT_MAX_URL_FIELDS, maximum=max_fields)
+
     cleaned_parts: list[str] = []
-    for key, parameter_value in parse_qsl(value, keep_blank_values=True):
+    for key, parameter_value in parse_qsl(
+        value,
+        keep_blank_values=True,
+        max_num_fields=max_fields,
+    ):
         normalized_key = _normalize_key(key)
         cleaned_key = quote_plus(_escape_control_characters(cleaner.clean_text(key)))
 
@@ -138,6 +157,11 @@ def clean_url(url: str, *, policy: CleanerPolicy | None = None, redact_full: boo
     cleaner = Cleaner(policy=policy or CleanerPolicy.default())
     if redact_full:
         return cleaner.policy.masking.mask_category("url")
+    if len(url) > DEFAULT_MAX_TEXT_CHARS:
+        raise InputLimitExceededError(
+            limit=_LIMIT_MAX_URL_CHARS,
+            maximum=DEFAULT_MAX_TEXT_CHARS,
+        )
 
     try:
         parts = urlsplit(url)
