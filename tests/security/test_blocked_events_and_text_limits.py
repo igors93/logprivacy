@@ -5,7 +5,7 @@ import logging
 import pytest
 
 from logprivacy.cleaner import Cleaner
-from logprivacy.exceptions import LogBlockedError, LogPrivacyError
+from logprivacy.exceptions import InputLimitExceededError, LogBlockedError, LogPrivacyError
 from logprivacy.integrations.logging_filter import LogPrivacyFilter
 from logprivacy.internal.matches import _DetectedMatch
 from logprivacy.policy import CleanerPolicy
@@ -17,6 +17,12 @@ class _NoOpRule:
 
     def find(self, text: str) -> tuple[_DetectedMatch, ...]:
         return ()
+
+    def find_limited(self, text: str, max_matches: int) -> tuple[_DetectedMatch, ...]:
+        matches = self.find(text)
+        if len(matches) > max_matches:
+            raise InputLimitExceededError(limit="max_matches", maximum=max_matches)
+        return matches
 
     def replacement_for(self, match: _DetectedMatch, masking: object) -> str:
         return "[TEST]"
@@ -47,6 +53,12 @@ class _CharacterRule:
             )
             for index, value in enumerate(text)
         )
+
+    def find_limited(self, text: str, max_matches: int) -> tuple[_DetectedMatch, ...]:
+        matches = self.find(text)
+        if len(matches) > max_matches:
+            raise InputLimitExceededError(limit="max_matches", maximum=max_matches)
+        return matches
 
     def replacement_for(self, match: _DetectedMatch, masking: object) -> str:
         return "[X]"

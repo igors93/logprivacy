@@ -209,10 +209,11 @@ class LogPrivacyFilter(logging.Filter):
             _replace_record_with_marker(record, marker)
             return True
         except InputLimitExceededError as exc:
-            _replace_record_with_marker(
-                record,
+            marker = sanitize_output_text(
                 f"[LOGPRIVACY INPUT LIMIT EXCEEDED limit={exc.limit}]",
+                max_chars=DEFAULT_MAX_RENDER_CHARS,
             )
+            _replace_record_with_marker(record, marker)
             return True
 
         return True

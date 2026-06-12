@@ -62,6 +62,12 @@ class _BlockingRule:
             ),
         )
 
+    def find_limited(self, text: str, max_matches: int) -> tuple[_DetectedMatch, ...]:
+        matches = self.find(text)
+        if len(matches) > max_matches:
+            raise InputLimitExceededError(limit="max_matches", maximum=max_matches)
+        return matches
+
     def replacement_for(self, match: _DetectedMatch, masking: object) -> str:
         return "[BLOCKED]"
 

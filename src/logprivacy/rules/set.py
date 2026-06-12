@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import TYPE_CHECKING
 
 from logprivacy.exceptions import RuleValidationError
-
-if TYPE_CHECKING:
-    from logprivacy.rules.base import RedactionRule
+from logprivacy.rules.base import RedactionRule
 
 
 class RuleSet:
@@ -31,10 +28,6 @@ class RuleSet:
     def __setattr__(self, name: str, value: object) -> None:
         raise AttributeError(f"{type(self).__name__!r} is immutable")
 
-    # ------------------------------------------------------------------
-    # Sequence-like interface
-    # ------------------------------------------------------------------
-
     def __iter__(self) -> Iterator[RedactionRule]:
         return iter(self._rules)
 
@@ -48,10 +41,6 @@ class RuleSet:
         names = [rule.name for rule in self._rules]
         return f"RuleSet({names!r})"
 
-    # ------------------------------------------------------------------
-    # Lookup
-    # ------------------------------------------------------------------
-
     def get(self, name: str) -> RedactionRule | None:
         """Return the rule with this name, or None if not present."""
         return self._index.get(name)
@@ -63,10 +52,6 @@ class RuleSet:
         except KeyError:
             raise KeyError(f"No rule named {name!r} in this RuleSet") from None
 
-    # ------------------------------------------------------------------
-    # Composition (returns new RuleSet; does not mutate)
-    # ------------------------------------------------------------------
-
     def append(self, *rules: RedactionRule) -> RuleSet:
         """Return a new RuleSet with additional rules appended."""
         return RuleSet((*self._rules, *rules))
@@ -74,11 +59,6 @@ class RuleSet:
     def as_tuple(self) -> tuple[RedactionRule, ...]:
         """Return a read-only tuple view of the rules in order."""
         return self._rules
-
-
-# ---------------------------------------------------------------------------
-# Validation helpers
-# ---------------------------------------------------------------------------
 
 
 def _validate_rules(rules: tuple[RedactionRule, ...]) -> None:
@@ -116,6 +96,7 @@ def _validate_rule_contract(rule: object, index: int) -> None:
         raise RuleValidationError(
             f"Object at index {index} ({type(rule).__name__!r}) is missing callable 'find'"
         )
+
     has_replacement = hasattr(rule, "replacement_for") and callable(
         getattr(rule, "replacement_for", None)
     )
@@ -124,3 +105,13 @@ def _validate_rule_contract(rule: object, index: int) -> None:
             f"Object at index {index} ({type(rule).__name__!r})"
             " is missing callable 'replacement_for'"
         )
+
+    # RedactionRule subclasses retain the legacy bounded fallback. Structural
+    # third-party rules must provide an explicit bounded implementation.
+    if not isinstance(rule, RedactionRule):
+        limited_find = getattr(rule, "find_limited", None)
+        if not callable(limited_find):
+            raise RuleValidationError(
+                f"Object at index {index} ({type(rule).__name__!r})"
+                " is missing callable 'find_limited'"
+            )

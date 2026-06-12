@@ -11,7 +11,6 @@ from logprivacy.exceptions import InputLimitExceededError, RuleValidationError
 from logprivacy.internal.matches import _DetectedMatch
 from logprivacy.masking.strategy import MaskingStrategy
 from logprivacy.result import Finding
-from logprivacy.rules.base import RedactionRule
 from logprivacy.rules.set import RuleSet
 
 DEFAULT_MAX_TEXT_CHARS = 1_000_000
@@ -54,11 +53,7 @@ class TextScanner:
         for rule in self._rule_set:
             remaining = self._max_matches - len(matches)
             try:
-                raw = (
-                    rule.find_limited(text, remaining)
-                    if isinstance(rule, RedactionRule)
-                    else rule.find(text)
-                )
+                raw = rule.find_limited(text, remaining)
             except InputLimitExceededError as exc:
                 if exc.limit != "max_matches":
                     raise
