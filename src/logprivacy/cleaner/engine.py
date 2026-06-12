@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -37,6 +38,14 @@ from logprivacy.structured.sequence import clean_sequence
 
 _EXACT_BYTE_TYPES = frozenset({bytes, bytearray, memoryview})
 _EXACT_SCALAR_TYPES = frozenset({int, float, complex, bool})
+_SAFE_TYPE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9_.-]+")
+
+
+def _unsupported_type_marker(value: object) -> str:
+    """Return a bounded marker without invoking user-controlled representations."""
+    name = type(value).__name__ or "object"
+    safe_name = _SAFE_TYPE_NAME_PATTERN.sub("_", name)[:80] or "object"
+    return f"[UNSUPPORTED:{safe_name}]"
 
 
 @dataclass(frozen=True, slots=True)
@@ -392,4 +401,7 @@ class Cleaner:
                 state.mark_limit(LIMIT_REPRESENTATION_ERROR)
                 return UNAVAILABLE_PLACEHOLDER
 
-        return value
+        if value is None or value_type in _EXACT_SCALAR_TYPES:
+            return value
+
+        return _unsupported_type_marker(value)

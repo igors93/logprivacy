@@ -6,6 +6,7 @@ import logging
 import traceback
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from typing import NoReturn
 
 from logprivacy.cleaner import Cleaner
 from logprivacy.exceptions import InputLimitExceededError, LogBlockedError
@@ -33,6 +34,117 @@ def _build_standard_record_attributes() -> frozenset[str]:
 
 
 _STANDARD_RECORD_ATTRIBUTES = _build_standard_record_attributes()
+_LIMIT_MESSAGE_FORMAT_CHARS = "message_format_chars"
+_FORMAT_FLAGS = frozenset("#0- +")
+_FORMAT_LENGTH_MODIFIERS = frozenset("hlL")
+
+
+def _decimal_exceeds_limit(digits: str, maximum: int) -> bool:
+    """Return whether a decimal field exceeds ``maximum`` without large integer parsing."""
+    normalized = digits.lstrip("0") or "0"
+    maximum_text = str(maximum)
+    return len(normalized) > len(maximum_text) or (
+        len(normalized) == len(maximum_text) and normalized > maximum_text
+    )
+
+
+def _raise_message_format_limit() -> NoReturn:
+    raise InputLimitExceededError(
+        limit=_LIMIT_MESSAGE_FORMAT_CHARS,
+        maximum=DEFAULT_MAX_RENDER_CHARS,
+    )
+
+
+def _consume_dynamic_size(args: object, index: int) -> tuple[int, int]:
+    """Validate one ``*`` width or precision argument and return the next index."""
+    if not isinstance(args, tuple) or index >= len(args):
+        _raise_message_format_limit()
+    value = args[index]
+    if isinstance(value, bool) or not isinstance(value, int):
+        _raise_message_format_limit()
+    size = abs(value)
+    if size > DEFAULT_MAX_RENDER_CHARS:
+        _raise_message_format_limit()
+    return index + 1, size
+
+
+def _validate_percent_format(template: str, args: object) -> None:
+    """Reject percent-format widths that can allocate beyond the render budget."""
+    if not args:
+        return
+    if len(template) > DEFAULT_MAX_RENDER_CHARS:
+        _raise_message_format_limit()
+
+    index = 0
+    argument_index = 0
+    declared_output_chars = len(template)
+    template_length = len(template)
+    while index < template_length:
+        percent = template.find("%", index)
+        if percent < 0:
+            return
+        index = percent + 1
+        if index < template_length and template[index] == "%":
+            index += 1
+            continue
+
+        mapping_conversion = False
+        if index < template_length and template[index] == "(":
+            closing = template.find(")", index + 1)
+            if closing < 0:
+                return
+            mapping_conversion = True
+            index = closing + 1
+
+        while index < template_length and template[index] in _FORMAT_FLAGS:
+            index += 1
+
+        field_width = 0
+        field_precision = 0
+        if index < template_length and template[index] == "*":
+            if mapping_conversion:
+                _raise_message_format_limit()
+            argument_index, field_width = _consume_dynamic_size(args, argument_index)
+            index += 1
+        else:
+            width_start = index
+            while index < template_length and template[index].isdigit():
+                index += 1
+            if width_start < index:
+                width_text = template[width_start:index]
+                if _decimal_exceeds_limit(width_text, DEFAULT_MAX_RENDER_CHARS):
+                    _raise_message_format_limit()
+                field_width = int(width_text)
+
+        if index < template_length and template[index] == ".":
+            index += 1
+            if index < template_length and template[index] == "*":
+                if mapping_conversion:
+                    _raise_message_format_limit()
+                argument_index, field_precision = _consume_dynamic_size(args, argument_index)
+                index += 1
+            else:
+                precision_start = index
+                while index < template_length and template[index].isdigit():
+                    index += 1
+                if precision_start < index:
+                    precision_text = template[precision_start:index]
+                    if _decimal_exceeds_limit(precision_text, DEFAULT_MAX_RENDER_CHARS):
+                        _raise_message_format_limit()
+                    field_precision = int(precision_text)
+
+        declared_output_chars += max(field_width, field_precision)
+        if declared_output_chars > DEFAULT_MAX_RENDER_CHARS:
+            _raise_message_format_limit()
+
+        while index < template_length and template[index] in _FORMAT_LENGTH_MODIFIERS:
+            index += 1
+
+        if index < template_length:
+            conversion = template[index]
+            index += 1
+            if conversion != "%" and not mapping_conversion:
+                argument_index += 1
 
 
 def _replace_record_with_marker(record: logging.LogRecord, message: str) -> None:
@@ -74,8 +186,9 @@ def _sanitize_message(record: logging.LogRecord, sanitizer: LoggingValueSanitize
 
     try:
         record.args = sanitizer.sanitize_args(record.args)
+        _validate_percent_format(record.msg, record.args)
         rendered = record.getMessage()
-    except LogBlockedError:
+    except (LogBlockedError, InputLimitExceededError):
         raise
     except Exception:
         rendered = safe_render(
