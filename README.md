@@ -383,8 +383,8 @@ Process JSONL (newline-delimited JSON) files line by line without loading the en
 from logprivacy import scan_jsonl, clean_jsonl, iter_safe_jsonl, safe_jsonl_write
 
 # Scan for findings without modifying the file
-stats = scan_jsonl("app.jsonl")
-print(stats.total_lines, stats.affected_lines)
+for record in scan_jsonl("app.jsonl"):
+    print(f"line {record.line_number}: {len(record.findings)} finding(s)")
 
 # Clean atomically — writes to a temp file, then os.replace()
 # The original is never partially overwritten on failure

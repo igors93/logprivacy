@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import atexit
+import contextlib
 import math
 import pickle
+import queue
 import re
 import signal
+import struct
 import subprocess
 import sys
 import threading
 from collections.abc import Callable
 from re import Pattern
 from types import FrameType
-from typing import Any, cast
+from typing import Any, BinaryIO, cast
 
 from logprivacy.exceptions import InputLimitExceededError
 
@@ -20,6 +24,7 @@ DEFAULT_REGEX_TIMEOUT_SECONDS = 0.25
 _WORKER_STARTUP_SECONDS = 10.0
 _LIMIT_REGEX_EXECUTION_MS = "regex_execution_ms"
 _LIMIT_REGEX_WORKER_STARTUP_MS = "regex_worker_startup_ms"
+_FRAME_HEADER_SIZE = 4
 
 _GetSignal = Callable[[int], Any]
 _SetSignal = Callable[[int, Any], Any]
@@ -36,18 +41,174 @@ _SETITIMER = cast(_SetITimer | None, getattr(signal, "setitimer", None))
 _WORKER_CODE = r"""
 import pickle
 import re
+import struct
 import sys
 
-sys.stdout.buffer.write(b"READY\n")
-sys.stdout.buffer.flush()
-pattern, flags, text = pickle.loads(sys.stdin.buffer.read())
-compiled = re.compile(pattern, flags)
-pickle.dump(compiled.search(text) is not None, sys.stdout.buffer)
+
+def read_exact(stream, size):
+    chunks = []
+    remaining = size
+    while remaining:
+        chunk = stream.read(remaining)
+        if not chunk:
+            raise EOFError
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+stdin = sys.stdin.buffer
+stdout = sys.stdout.buffer
+stdout.write(b"READY\n")
+stdout.flush()
+
+while True:
+    header = stdin.read(4)
+    if not header:
+        break
+    if len(header) != 4:
+        break
+    try:
+        size = struct.unpack("!I", header)[0]
+        payload = read_exact(stdin, size)
+        pattern, flags, text = pickle.loads(payload)
+        response = ("ok", re.compile(pattern, flags).search(text) is not None)
+    except Exception:
+        response = ("error", None)
+    encoded = pickle.dumps(response, protocol=pickle.HIGHEST_PROTOCOL)
+    stdout.write(struct.pack("!I", len(encoded)))
+    stdout.write(encoded)
+    stdout.flush()
 """
 
 
 class _RegexExecutionTimeout(Exception):
     """Internal signal used to interrupt the stdlib regex engine."""
+
+
+class _RegexWorkerUnavailable(Exception):
+    """Internal marker for a worker that exited before returning a result."""
+
+
+class _PersistentRegexWorker:
+    """Reuse one isolated Python worker for sequential regex searches."""
+
+    def __init__(self) -> None:
+        process = subprocess.Popen(
+            [sys.executable, "-I", "-c", _WORKER_CODE],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        stdin_pipe = process.stdin
+        stdout_pipe = process.stdout
+        assert stdin_pipe is not None
+        assert stdout_pipe is not None
+
+        self._process: subprocess.Popen[bytes] = process
+        self._stdin: BinaryIO = stdin_pipe
+        self._stdout: BinaryIO = stdout_pipe
+        self._responses: queue.Queue[bytes | None] = queue.Queue()
+        self._request_lock = threading.Lock()
+        self._ready = threading.Event()
+        self._startup_ok = False
+        self._closed = False
+        self._reader = threading.Thread(target=self._read_responses, daemon=True)
+        self._reader.start()
+
+        if not self._ready.wait(_WORKER_STARTUP_SECONDS):
+            self.close()
+            raise InputLimitExceededError(
+                limit=_LIMIT_REGEX_WORKER_STARTUP_MS,
+                maximum=math.ceil(_WORKER_STARTUP_SECONDS * 1_000),
+            )
+        if not self._startup_ok:
+            self.close()
+            raise RuntimeError("regex worker failed to start")
+
+    @property
+    def is_alive(self) -> bool:
+        """Return whether the worker can accept another request."""
+        return not self._closed and self._process.poll() is None
+
+    def search(self, pattern: Pattern[str], text: str, *, timeout_seconds: float) -> bool:
+        """Run one search while serializing access to the shared worker."""
+        payload = pickle.dumps(
+            (pattern.pattern, pattern.flags & ~re.DEBUG, text),
+            protocol=pickle.HIGHEST_PROTOCOL,
+        )
+        frame = struct.pack("!I", len(payload)) + payload
+
+        with self._request_lock:
+            if not self.is_alive:
+                raise _RegexWorkerUnavailable
+            try:
+                self._stdin.write(frame)
+                self._stdin.flush()
+            except (BrokenPipeError, OSError, ValueError) as exc:
+                raise _RegexWorkerUnavailable from exc
+
+            try:
+                encoded = self._responses.get(timeout=timeout_seconds)
+            except queue.Empty:
+                self.close()
+                raise _execution_limit_error(timeout_seconds) from None
+
+            if encoded is None:
+                raise _RegexWorkerUnavailable
+            try:
+                status, result = pickle.loads(encoded)
+            except Exception as exc:
+                raise RuntimeError("regex worker returned an invalid result") from exc
+            if status != "ok" or type(result) is not bool:
+                raise RuntimeError("regex worker failed")
+            return result
+
+    def close(self) -> None:
+        """Stop the worker and release its pipes without waiting indefinitely."""
+        if self._closed:
+            return
+        self._closed = True
+        with contextlib.suppress(OSError, ValueError):
+            self._stdin.close()
+        if self._process.poll() is None:
+            with contextlib.suppress(OSError):
+                self._process.terminate()
+            try:
+                self._process.wait(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                with contextlib.suppress(OSError):
+                    self._process.kill()
+                with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+                    self._process.wait(timeout=0.2)
+        with contextlib.suppress(OSError, ValueError):
+            self._stdout.close()
+
+    def _read_responses(self) -> None:
+        try:
+            if self._stdout.readline() != b"READY\n":
+                return
+            self._startup_ok = True
+            self._ready.set()
+
+            while True:
+                header = _read_exact(self._stdout, _FRAME_HEADER_SIZE)
+                if header is None:
+                    return
+                size = struct.unpack("!I", header)[0]
+                payload = _read_exact(self._stdout, size)
+                if payload is None:
+                    return
+                self._responses.put(payload)
+        except (EOFError, OSError, ValueError, struct.error):
+            return
+        finally:
+            self._ready.set()
+            self._responses.put(None)
+
+
+_ACTIVE_WORKER: _PersistentRegexWorker | None = None
+_ACTIVE_WORKER_LOCK = threading.Lock()
 
 
 def regex_search_with_timeout(
@@ -96,51 +257,59 @@ def _search_in_worker(
     *,
     timeout_seconds: float,
 ) -> bool:
-    payload = pickle.dumps(
-        (pattern.pattern, pattern.flags & ~re.DEBUG, text),
-        protocol=pickle.HIGHEST_PROTOCOL,
-    )
-    process = subprocess.Popen(
-        [sys.executable, "-I", "-c", _WORKER_CODE],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
-    stdout_pipe = process.stdout
-    assert stdout_pipe is not None
+    for attempt in range(2):
+        worker = _get_worker()
+        try:
+            return worker.search(pattern, text, timeout_seconds=timeout_seconds)
+        except _RegexWorkerUnavailable:
+            _discard_worker(worker)
+            if attempt == 1:
+                raise RuntimeError("regex worker failed") from None
+    raise AssertionError("unreachable")
 
-    ready: list[bytes] = []
-    reader = threading.Thread(
-        target=lambda: ready.append(stdout_pipe.readline()),
-        daemon=True,
-    )
-    reader.start()
-    reader.join(_WORKER_STARTUP_SECONDS)
-    if reader.is_alive():
-        process.kill()
-        process.wait()
-        raise InputLimitExceededError(
-            limit=_LIMIT_REGEX_WORKER_STARTUP_MS,
-            maximum=math.ceil(_WORKER_STARTUP_SECONDS * 1_000),
-        )
-    if ready != [b"READY\n"]:
-        process.kill()
-        process.wait()
-        raise RuntimeError("regex worker failed to start")
 
-    try:
-        stdout, _ = process.communicate(input=payload, timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.communicate()
-        raise _execution_limit_error(timeout_seconds) from None
+def _get_worker() -> _PersistentRegexWorker:
+    global _ACTIVE_WORKER
+    with _ACTIVE_WORKER_LOCK:
+        worker = _ACTIVE_WORKER
+        if worker is None or not worker.is_alive:
+            if worker is not None:
+                worker.close()
+            worker = _PersistentRegexWorker()
+            _ACTIVE_WORKER = worker
+        return worker
 
-    if process.returncode != 0:
-        raise RuntimeError("regex worker failed")
-    result = pickle.loads(stdout)
-    if type(result) is not bool:
-        raise RuntimeError("regex worker returned an invalid result")
-    return result
+
+def _discard_worker(worker: _PersistentRegexWorker) -> None:
+    global _ACTIVE_WORKER
+    with _ACTIVE_WORKER_LOCK:
+        if _ACTIVE_WORKER is worker:
+            _ACTIVE_WORKER = None
+    worker.close()
+
+
+def _shutdown_worker() -> None:
+    """Close the shared worker during interpreter shutdown and test cleanup."""
+    global _ACTIVE_WORKER
+    with _ACTIVE_WORKER_LOCK:
+        worker = _ACTIVE_WORKER
+        _ACTIVE_WORKER = None
+    if worker is not None:
+        worker.close()
+
+
+def _read_exact(stream: BinaryIO, size: int) -> bytes | None:
+    chunks: list[bytes] = []
+    remaining = size
+    while remaining:
+        chunk = stream.read(remaining)
+        if not chunk:
+            if not chunks:
+                return None
+            raise EOFError
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
 
 
 def _signal_timeout_available() -> bool:
@@ -164,3 +333,6 @@ def _execution_limit_error(timeout_seconds: float) -> InputLimitExceededError:
         limit=_LIMIT_REGEX_EXECUTION_MS,
         maximum=max(1, math.ceil(timeout_seconds * 1_000)),
     )
+
+
+atexit.register(_shutdown_worker)
