@@ -11,7 +11,9 @@ from logprivacy.masking.value import mask_concrete_value
 from logprivacy.rules.base import RedactionRule
 
 _AUTHORIZATION_PATTERN = re.compile(
+    r"(?P<key_quote>['\"]?)"
     r"(?P<key>\b(?:authorization|proxy[-_]?authorization)\b)"
+    r"(?P=key_quote)"
     r"(?P<sep>\s*[:=]\s*)"
     r"(?P<quote>['\"]?)"
     r"(?P<scheme>Bearer|Basic)"
@@ -22,12 +24,17 @@ _AUTHORIZATION_PATTERN = re.compile(
 )
 
 _CREDENTIAL_PATTERN = re.compile(
+    r"(?P<key_quote>['\"]?)"
     r"(?P<key>\b(?:password|passwd|pwd|secret|api_key|apikey|access_key|access_token|"
     r"refresh_token|token|client_secret|private_key|auth_token|authorization|cookie|set-cookie)\b)"
+    r"(?P=key_quote)"
     r"(?P<sep>\s*[:=]\s*)"
-    r"(?P<quote>['\"]?)"
-    r"(?P<value>[^'\"\s,;&]+)"
-    r"(?P=quote)",
+    r"(?:"
+    r'"(?P<double_value>(?:\\.|[^"\\\r\n])*)"|'
+    r"'(?P<single_value>(?:\\.|[^'\\\r\n])*)'|"
+    r"(?P<bracketed_value>\[(?:\\.|[^\]\\\r\n])*\])|"
+    r"(?P<bare_value>[^'\"\s,;&}\]]+)"
+    r")",
     re.IGNORECASE,
 )
 
@@ -37,6 +44,25 @@ def _ranges_overlap(start: int, end: int, ranges: list[tuple[int, int]]) -> bool
     return any(
         start < protected_end and protected_start < end for protected_start, protected_end in ranges
     )
+
+
+def _credential_value(match: re.Match[str]) -> tuple[str, str]:
+    """Return the original quote and value from a credential assignment."""
+    double_value = match.group("double_value")
+    if double_value is not None:
+        return '"', double_value
+
+    single_value = match.group("single_value")
+    if single_value is not None:
+        return "'", single_value
+
+    bracketed_value = match.group("bracketed_value")
+    if bracketed_value is not None:
+        return "", bracketed_value
+
+    bare_value = match.group("bare_value")
+    assert bare_value is not None
+    return "", bare_value
 
 
 class CredentialRule(RedactionRule):
@@ -77,6 +103,7 @@ class CredentialRule(RedactionRule):
                     reason=f"authorization scheme {scheme!r} carries a sensitive credential",
                     metadata={
                         "kind": "authorization",
+                        "key_quote": match.group("key_quote"),
                         "key": match.group("key"),
                         "sep": match.group("sep"),
                         "quote": match.group("quote"),
@@ -94,6 +121,7 @@ class CredentialRule(RedactionRule):
             if max_matches is not None and len(matches) >= max_matches:
                 raise InputLimitExceededError(limit="max_matches", maximum=max_matches)
 
+            quote, value = _credential_value(match)
             matches.append(
                 _DetectedMatch(
                     rule_name=self.name,
@@ -103,10 +131,11 @@ class CredentialRule(RedactionRule):
                     matched=match.group(0),
                     reason=f"key {match.group('key')!r} is considered sensitive",
                     metadata={
+                        "key_quote": match.group("key_quote"),
                         "key": match.group("key"),
                         "sep": match.group("sep"),
-                        "quote": match.group("quote"),
-                        "value": match.group("value"),
+                        "quote": quote,
+                        "value": value,
                     },
                 )
             )
@@ -114,6 +143,7 @@ class CredentialRule(RedactionRule):
 
     def replacement_for(self, match: _DetectedMatch, masking: MaskingStrategy) -> str:
         """Keep the credential key visible and redact only the concrete value."""
+        key_quote = match.metadata.get("key_quote", "")
         key = match.metadata.get("key", "secret")
         sep = match.metadata.get("sep", "=")
         quote = match.metadata.get("quote", "")
@@ -127,9 +157,10 @@ class CredentialRule(RedactionRule):
             masking=masking,
         )
 
+        key_assignment = f"{key_quote}{key}{key_quote}{sep}"
         if match.metadata.get("kind") == "authorization":
             scheme = match.metadata.get("scheme", "")
             scheme_sep = match.metadata.get("scheme_sep", " ")
-            return f"{key}{sep}{quote}{scheme}{scheme_sep}{replacement}{quote}"
+            return f"{key_assignment}{quote}{scheme}{scheme_sep}{replacement}{quote}"
 
-        return f"{key}{sep}{quote}{replacement}{quote}"
+        return f"{key_assignment}{quote}{replacement}{quote}"

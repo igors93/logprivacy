@@ -194,6 +194,7 @@ class Cleaner:
                 key_text, trusted = safe_mapping_key_text(key)
                 safe_key = self._sanitize_location_text(key_text)
                 child_path = append_mapping_key(path, safe_key)
+                findings.extend(self._bounded_findings(key_text, state, path=child_path))
 
                 if self.policy.is_sensitive_key(key):
                     matched = self._sensitive_value_marker(item)

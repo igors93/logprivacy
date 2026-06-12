@@ -57,8 +57,11 @@ def clean_mapping(
 
             key_text, trusted_key = safe_mapping_key_text(key)
             if trusted_key:
+                cleaned_key_text = cleaner.clean_text(key_text)
                 preferred_key: Any = (
-                    cleaner.clean_text(key_text) if cleaner.policy.clean_mapping_keys else key
+                    cleaned_key_text
+                    if cleaner.policy.clean_mapping_keys or cleaned_key_text != key_text
+                    else key
                 )
             else:
                 preferred_key = cleaner._sanitize_location_text(key_text)
