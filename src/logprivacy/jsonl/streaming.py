@@ -151,7 +151,12 @@ def clean_jsonl(
     fd, tmp_path_str = tempfile.mkstemp(dir=output_dir, suffix=".jsonl.tmp")
     tmp_path = Path(tmp_path_str)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as tmp_stream:
+        try:
+            tmp_stream = os.fdopen(fd, "w", encoding="utf-8", newline="")
+        except BaseException:
+            os.close(fd)
+            raise
+        with tmp_stream:
             for line_number, raw_line, source_error in _iter_source_lines(source):
                 if source_error is not None:
                     lines_read += 1
@@ -224,7 +229,7 @@ def clean_jsonl(
             pass
 
         os.replace(tmp_path_str, str(output_path))
-    except Exception:
+    except BaseException:
         with contextlib.suppress(OSError):
             tmp_path.unlink(missing_ok=True)
         raise

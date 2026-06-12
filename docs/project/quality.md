@@ -48,11 +48,8 @@ GitHub Actions runs the full test suite across:
 |---|---|
 | Linux (ubuntu-latest) | 3.10, 3.11, 3.12, 3.13, 3.14 |
 | macOS (macos-latest) | 3.10, 3.11, 3.12, 3.13, 3.14 |
-| Windows (windows-latest) | 3.10, 3.11, 3.12, 3.13 |
+| Windows (windows-latest) | 3.10, 3.11, 3.12, 3.13, 3.14 |
 
 Quality checks (formatting, lint, type check) run on Python 3.12 on Linux
 before the test matrix starts. The build job runs after all tests pass and
 verifies the wheel installs cleanly into a fresh virtual environment.
-
-Python 3.14 uses `allow-prereleases: true` in the setup action. Windows support
-for 3.14 is added when it reaches GA.

@@ -206,7 +206,7 @@ print(clean(message))
 # Login failed for [EMAIL] with password=[SECRET]
 ```
 
-`clean()` accepts strings, dicts, lists, tuples, dataclasses, exceptions, bytes, and most standard Python types. The return type matches the input type.
+`clean()` accepts strings, dicts, lists, tuples, and bytes. The return type matches the input type. For dataclasses, exceptions, and custom objects use [`to_safe_data()`](#structured-and-json-safe-data).
 
 ---
 
@@ -321,7 +321,7 @@ print(clean(payload))
 # }
 ```
 
-Nested structures are traversed recursively up to a configurable depth limit (default: 20). Sensitive dictionary keys (`password`, `api_key`, `secret`, etc.) are redacted even when the value does not match a regex pattern.
+Nested dicts and lists are traversed recursively up to a configurable depth limit (default: 20). Sensitive dictionary keys (`password`, `api_key`, `secret`, etc.) are redacted even when the value is empty or does not match a regex pattern. For dataclasses and exceptions, use [`to_safe_data()`](#structured-and-json-safe-data).
 
 ---
 
@@ -440,24 +440,26 @@ Cleaner(CleanerPolicy.default(masking="hash"))
 | `sk_live_abcdef123456` | `[SECRET]` | `sk_l********3456` | `[SECRET:3c6e0b8a]` |
 | `Bearer eyJhbGci...` | `[TOKEN]` | `[TOKEN]` | `[TOKEN:7f4a1b2c]` |
 
-### HMAC pseudonymization
+### Hash pseudonymization
 
-For cases where you need **stable, reversible tokens** without exposing the original value — compliance logging, analytics across services, A/B testing:
+For cases where you need **stable, deterministic tokens** without exposing the original value — compliance logging, analytics across services, A/B testing:
 
 ```python
-from logprivacy import HMACMaskingStrategy, CleanerPolicy
+from logprivacy import HashMaskingStrategy, CleanerPolicy, clean
 
-policy = CleanerPolicy.default().with_pseudonymizer(
-    HMACMaskingStrategy(key=b"your-32-byte-minimum-secret-key!")
+policy = CleanerPolicy.default().with_masking(
+    HashMaskingStrategy(key=b"your-32-byte-minimum-secret-key!")
 )
 clean("john@example.com", policy=policy)
-# → [EMAIL:hmac:3f4a7c2d]
+# → [EMAIL:855f96e9f4e27c0b]
 
 # Same input + same key = same token, always
 # Different key = entirely different tokens (key rotation)
 ```
 
-The HMAC key is **never** stored in `repr()`, `str()`, serialization, or exception messages.
+This is **pseudonymization, not anonymization** — a party with the key can re-derive any token from the original value. The key is **never** stored in `repr()`, `str()`, serialization, or exception messages.
+
+For field-level pseudonymization in structured data, use `HMACMaskingStrategy` with `with_pseudonymizer()` and a `PathRule` with `action="pseudonymize"` — see [Path Rules and Pseudonymization](#path-rules-and-pseudonymization).
 
 ---
 
@@ -660,9 +662,7 @@ python -m build                  # build distribution
 |---|---|
 | Linux (ubuntu-latest) | 3.10, 3.11, 3.12, 3.13, 3.14 |
 | macOS (macos-latest) | 3.10, 3.11, 3.12, 3.13, 3.14 |
-| Windows (windows-latest) | 3.10, 3.11, 3.12, 3.13 |
-
-Python 3.14 is a pre-release; Windows support is added when it reaches GA.
+| Windows (windows-latest) | 3.10, 3.11, 3.12, 3.13, 3.14 |
 
 ---
 

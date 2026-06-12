@@ -118,9 +118,8 @@ def assert_clean(value: Any, *, policy: CleanerPolicy | None = None) -> None:
     """
     report = audit(value, policy=policy)
     if not report.safe:
-        categories = ", ".join(report.categories)
         raise LogPrivacyAssertionError(
-            f"Sensitive data found: {categories}",
+            report.describe(),
             categories=report.categories,
         )
 

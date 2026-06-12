@@ -206,17 +206,16 @@ class Cleaner:
                 findings.extend(self._bounded_findings(key_text, state, path=child_path))
 
                 if self.policy.is_sensitive_key(key):
-                    matched = self._sensitive_value_marker(item)
-                    if matched:
-                        finding = Finding(
-                            rule_name="sensitive_key",
-                            category="credential",
-                            start=0,
-                            end=len(matched),
-                            reason="value is associated with a policy-sensitive key",
-                            location=child_path,
-                        )
-                        findings.extend(state.take_findings((finding,)))
+                    matched = self._sensitive_value_marker(item) or "<empty>"
+                    finding = Finding(
+                        rule_name="sensitive_key",
+                        category="credential",
+                        start=0,
+                        end=len(matched),
+                        reason="value is associated with a policy-sensitive key",
+                        location=child_path,
+                    )
+                    findings.extend(state.take_findings((finding,)))
                 else:
                     findings.extend(
                         self._collect_audit_findings(

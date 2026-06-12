@@ -81,3 +81,43 @@ def test_field_rule_regex_still_matches_normal_fields() -> None:
 def test_exact_and_contains_modes_keep_existing_behavior() -> None:
     assert FieldRule.exact("raw_body").matches("rawBody") is True
     assert FieldRule.contains("secret").matches("clientSecretValue") is True
+
+
+# ---------------------------------------------------------------------------
+# Hash pseudonymization text pipeline (LP-REM-001)
+# ---------------------------------------------------------------------------
+
+
+def test_text_pipeline_hash_masking_produces_stable_tokens() -> None:
+    """HashMaskingStrategy(key=...) produces stable deterministic tokens in clean()."""
+    from logprivacy import CleanerPolicy, HashMaskingStrategy, clean_text
+
+    policy = CleanerPolicy.default().with_masking(
+        HashMaskingStrategy(key=b"test-secret-key-minimum-16-bytes")
+    )
+
+    result1 = clean_text("john@example.com", policy=policy)
+    result2 = clean_text("john@example.com", policy=policy)
+
+    assert result1 == result2
+    assert "john@example.com" not in result1
+    assert result1.startswith("[EMAIL:")
+
+
+def test_text_pipeline_different_keys_produce_different_tokens() -> None:
+    """Different keys must produce different tokens for the same input."""
+    from logprivacy import CleanerPolicy, HashMaskingStrategy, clean_text
+
+    policy_a = CleanerPolicy.default().with_masking(
+        HashMaskingStrategy(key=b"key-a-minimum-16-bytes-padding-x")
+    )
+    policy_b = CleanerPolicy.default().with_masking(
+        HashMaskingStrategy(key=b"key-b-minimum-16-bytes-padding-y")
+    )
+
+    token_a = clean_text("john@example.com", policy=policy_a)
+    token_b = clean_text("john@example.com", policy=policy_b)
+
+    assert token_a != token_b
+    assert "john@example.com" not in token_a
+    assert "john@example.com" not in token_b

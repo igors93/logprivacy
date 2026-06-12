@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from pathlib import Path
 
 import pytest
 
+import logprivacy.jsonl.streaming as _streaming_module
 from logprivacy.exceptions import JSONLProcessingError
 from logprivacy.jsonl import clean_jsonl, iter_safe_jsonl, safe_jsonl_write, scan_jsonl
 from logprivacy.path_rules.rules import PathRule
@@ -304,3 +306,72 @@ def test_scan_jsonl_empty(tmp_path: Path):
     f = tmp_path / "empty.jsonl"
     f.write_text("", encoding="utf-8")
     assert list(scan_jsonl(f)) == []
+
+
+# ---------------------------------------------------------------------------
+# clean_jsonl — BaseException cleanup (LP-REM-003)
+# ---------------------------------------------------------------------------
+
+
+def test_clean_jsonl_temp_removed_on_keyboard_interrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """KeyboardInterrupt during processing must not leave an orphaned temp file."""
+    src = tmp_path / "input.jsonl"
+    src.write_text('{"x": 1}\n', encoding="utf-8")
+    out = tmp_path / "output.jsonl"
+
+    def _raise_ki(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(_streaming_module, "to_safe_data_with_result", _raise_ki)
+
+    with pytest.raises(KeyboardInterrupt):
+        clean_jsonl(src, output=out)
+
+    assert list(tmp_path.glob("*.tmp")) == []
+    assert not out.exists()
+
+
+def test_clean_jsonl_temp_removed_on_system_exit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """SystemExit during processing must not leave an orphaned temp file."""
+    src = tmp_path / "input.jsonl"
+    src.write_text('{"x": 1}\n', encoding="utf-8")
+    out = tmp_path / "output.jsonl"
+
+    def _raise_se(*args, **kwargs):
+        raise SystemExit(1)
+
+    monkeypatch.setattr(_streaming_module, "to_safe_data_with_result", _raise_se)
+
+    with pytest.raises(SystemExit):
+        clean_jsonl(src, output=out)
+
+    assert list(tmp_path.glob("*.tmp")) == []
+    assert not out.exists()
+
+
+def test_clean_jsonl_fd_closed_on_fdopen_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """If os.fdopen raises, the raw fd must be closed and temp file removed."""
+    src = tmp_path / "input.jsonl"
+    src.write_text('{"x": 1}\n', encoding="utf-8")
+    out = tmp_path / "output.jsonl"
+
+    original_close = os.close
+    closed: list[int] = []
+
+    def _mock_fdopen(fd, *args, **kwargs):
+        raise OSError("simulated fdopen failure")
+
+    def _mock_close(fd: int) -> None:
+        closed.append(fd)
+        original_close(fd)
+
+    monkeypatch.setattr(os, "fdopen", _mock_fdopen)
+    monkeypatch.setattr(os, "close", _mock_close)
+
+    with pytest.raises(OSError, match="simulated fdopen failure"):
+        clean_jsonl(src, output=out)
+
+    assert len(closed) == 1, "raw fd must be closed exactly once"
+    assert list(tmp_path.glob("*.tmp")) == []

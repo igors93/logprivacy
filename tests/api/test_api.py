@@ -97,3 +97,35 @@ def test_assert_clean_fails_with_sensitive_dict():
 
     with pytest.raises(LogPrivacyAssertionError):
         assert_clean({"password": "123"})
+
+
+# ---------------------------------------------------------------------------
+# assert_clean message includes paths and findings (LP-REM-006)
+# ---------------------------------------------------------------------------
+
+
+def test_assert_clean_message_includes_finding_location() -> None:
+    with pytest.raises(LogPrivacyAssertionError) as exc_info:
+        assert_clean({"user": {"password": "secret123"}})
+
+    msg = str(exc_info.value)
+    assert "credential" in msg
+    assert "$.user.password" in msg
+
+
+def test_assert_clean_message_includes_multiple_categories() -> None:
+    with pytest.raises(LogPrivacyAssertionError) as exc_info:
+        assert_clean({"email": "user@example.com", "token": "sk_live_abc123def456"})
+
+    msg = str(exc_info.value)
+    assert exc_info.value.categories
+    assert len(msg) > 40
+
+
+def test_assert_clean_message_comes_from_report_describe() -> None:
+    with pytest.raises(LogPrivacyAssertionError) as exc_info:
+        assert_clean("password=abc123")
+
+    msg = str(exc_info.value)
+    assert "Findings" in msg
+    assert "credential" in msg
