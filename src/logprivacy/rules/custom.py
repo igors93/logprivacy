@@ -115,16 +115,20 @@ class CustomRegexRule(RegexRedactionRule):
             del signum, frame
             raise _RegexExecutionTimeout
 
-        previous_handler = signal.getsignal(signal.SIGALRM)  # type: ignore[attr-defined]
-        signal.signal(signal.SIGALRM, raise_timeout)  # type: ignore[attr-defined]
-        signal.setitimer(signal.ITIMER_REAL, timeout_seconds)  # type: ignore[attr-defined]
+        _sv = vars(signal)
+        _sigalrm = _sv["SIGALRM"]
+        _itimer_real = _sv["ITIMER_REAL"]
+        _setitimer = _sv["setitimer"]
+        previous_handler = signal.getsignal(_sigalrm)
+        signal.signal(_sigalrm, raise_timeout)
+        _setitimer(_itimer_real, timeout_seconds)
         try:
             return super()._find_matches(text, max_matches=max_matches)
         except _RegexExecutionTimeout:
             raise _execution_limit_error(timeout_seconds) from None
         finally:
-            signal.setitimer(signal.ITIMER_REAL, 0)  # type: ignore[attr-defined]
-            signal.signal(signal.SIGALRM, previous_handler)  # type: ignore[attr-defined]
+            _setitimer(_itimer_real, 0)
+            signal.signal(_sigalrm, previous_handler)
 
     def _find_matches_in_worker(
         self,
@@ -209,10 +213,11 @@ def _signal_timeout_available() -> bool:
     required = ("SIGALRM", "ITIMER_REAL", "getitimer", "setitimer")
     if not all(hasattr(signal, name) for name in required):
         return False
-    if signal.getsignal(signal.SIGALRM) is not signal.SIG_DFL:  # type: ignore[attr-defined]
+    _sv = vars(signal)
+    if signal.getsignal(_sv["SIGALRM"]) is not signal.SIG_DFL:
         return False
-    remaining, interval = signal.getitimer(signal.ITIMER_REAL)  # type: ignore[attr-defined]
-    return remaining == 0 and interval == 0  # type: ignore[no-any-return]
+    remaining, interval = _sv["getitimer"](_sv["ITIMER_REAL"])
+    return bool(remaining == 0 and interval == 0)
 
 
 def _execution_limit_error(timeout_seconds: float) -> InputLimitExceededError:

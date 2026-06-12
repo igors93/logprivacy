@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from re import Pattern
 from typing import Literal, TypeAlias
 
+from logprivacy.internal.regex_timeout import regex_search_with_timeout
+
 FieldAction: TypeAlias = Literal["mask", "remove", "truncate", "block", "pseudonymize"]
 FieldMatchMode: TypeAlias = Literal["exact", "contains", "regex"]
 
@@ -109,7 +111,7 @@ class FieldRule:
         compiled = self._compiled
         if compiled is None:
             return False
-        return compiled.search(normalized_field) is not None
+        return regex_search_with_timeout(compiled, normalized_field)
 
 
 def normalize_field_name(field_name: str) -> str:

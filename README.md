@@ -540,7 +540,7 @@ policy3 = CleanerPolicy.from_dict({
     "masking": "hash",
     "sensitive_keys": ["internal_id", "trace_token"],
     "field_rules": [
-        {"match": "exact", "field": "raw_body", "action": "truncate", "max_chars": 500}
+        {"match": "raw_body", "mode": "exact", "action": "truncate", "max_chars": 500}
     ],
 })
 ```
