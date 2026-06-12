@@ -349,6 +349,29 @@ def _iter_effective_handlers(logger: logging.Logger) -> Iterator[logging.Handler
         current = current.parent
 
 
+def _iter_namespace_handlers(logger: logging.Logger) -> Iterator[logging.Handler]:
+    """Yield effective and descendant-owned handlers for one logger namespace."""
+    seen: set[int] = set()
+
+    for handler in _iter_effective_handlers(logger):
+        seen.add(id(handler))
+        yield handler
+
+    root_logger = logging.getLogger()
+    prefix = None if logger is root_logger else f"{logger.name}."
+    for candidate in tuple(logging.Logger.manager.loggerDict.values()):
+        if not isinstance(candidate, logging.Logger) or candidate is logger:
+            continue
+        if prefix is not None and not candidate.name.startswith(prefix):
+            continue
+
+        for handler in candidate.handlers:
+            handler_id = id(handler)
+            if handler_id not in seen:
+                seen.add(handler_id)
+                yield handler
+
+
 def install_handler_filters(
     logger: logging.Logger,
     *,
@@ -359,7 +382,7 @@ def install_handler_filters(
     root_logger = logging.getLogger()
     logger_prefix = None if logger is root_logger else logger.name
 
-    for handler in _iter_effective_handlers(logger):
+    for handler in _iter_namespace_handlers(logger):
         existing = next(
             (
                 candidate

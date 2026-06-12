@@ -16,7 +16,7 @@ import threading
 from collections.abc import Callable
 from re import Pattern
 from types import FrameType
-from typing import Any, BinaryIO, cast
+from typing import IO, Any, cast
 
 from logprivacy.exceptions import InputLimitExceededError
 
@@ -106,8 +106,8 @@ class _PersistentRegexWorker:
         assert stdout_pipe is not None
 
         self._process: subprocess.Popen[bytes] = process
-        self._stdin: BinaryIO = stdin_pipe
-        self._stdout: BinaryIO = stdout_pipe
+        self._stdin: IO[bytes] = stdin_pipe
+        self._stdout: IO[bytes] = stdout_pipe
         self._responses: queue.Queue[bytes | None] = queue.Queue()
         self._request_lock = threading.Lock()
         self._ready = threading.Event()
@@ -298,7 +298,7 @@ def _shutdown_worker() -> None:
         worker.close()
 
 
-def _read_exact(stream: BinaryIO, size: int) -> bytes | None:
+def _read_exact(stream: IO[bytes], size: int) -> bytes | None:
     chunks: list[bytes] = []
     remaining = size
     while remaining:

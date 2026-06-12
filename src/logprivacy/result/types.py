@@ -277,3 +277,5 @@ class JSONLScanRecord:
 
     line_number: int
     findings: tuple[Finding, ...]
+    complete: bool = True
+    limitations: tuple[str, ...] = ()

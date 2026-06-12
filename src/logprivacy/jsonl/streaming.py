@@ -249,14 +249,15 @@ def scan_jsonl(
     adapters: AdapterRegistry | None = None,
     on_error: _OnError = "raise",
 ) -> Iterator[JSONLScanRecord]:
-    """Yield scan findings from a JSON Lines source, line by line.
+    """Yield scan findings and incomplete audits from a JSON Lines source.
 
     Each non-empty line is parsed as JSON, then audited for sensitive values.
-    Yields ``JSONLScanRecord`` for lines that contain findings.
-    Lines with no findings are not yielded.
+    A ``JSONLScanRecord`` is yielded when the line contains findings or when the
+    audit could not inspect the complete value. Complete lines with no findings
+    are omitted.
 
     ``"raise"`` raises ``JSONLProcessingError`` for invalid JSON or UTF-8.
-    Because scan records only represent findings, ``"skip"`` and
+    Because scan records represent parsed audits, ``"skip"`` and
     ``"placeholder"`` both omit invalid lines instead of yielding a synthetic
     finding. The original line content is never stored or included in errors.
     """
@@ -286,8 +287,13 @@ def scan_jsonl(
             continue
 
         report = cleaner.audit(parsed)
-        if report.findings:
-            yield JSONLScanRecord(line_number=line_number, findings=report.findings)
+        if report.findings or not report.complete:
+            yield JSONLScanRecord(
+                line_number=line_number,
+                findings=report.findings,
+                complete=report.complete,
+                limitations=report.limitations,
+            )
 
 
 def _validate_on_error(on_error: str) -> None:
